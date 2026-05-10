@@ -41,20 +41,24 @@ selected_zip = st.sidebar.selectbox("3. Select Zip Code", GEOGRAPHY_DATA[selecte
 st.sidebar.subheader("🏠 Property Filters")
 min_home_age = st.sidebar.slider("Minimum Home Age (Years)", 0, 50, 15)
 
-# --- NEW: DYNAMIC PERMIT PORTAL LINKS ---
+st.sidebar.markdown("---")
+
+# --- MOVED UP: PRIMARY ACTION BUTTON ---
+generate_leads = st.sidebar.button("Fetch Deep Records & Map", type="primary", use_container_width=True)
+
+# --- MOVED DOWN: DYNAMIC PERMIT PORTAL LINKS ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 Public Permit Verification")
 st.sidebar.markdown("Verify recent roof permits before knocking.")
 
 if selected_county == "Lee":
-    st.sidebar.link_button("Go to Lee County Permit Portal", "https://aca-prod.accela.com/LEECO/Default.aspx")
+    st.sidebar.link_button("Go to Lee County Permit Portal", "https://aca-prod.accela.com/LEECO/Default.aspx", use_container_width=True)
 elif selected_county == "Collier":
-    st.sidebar.link_button("Go to Collier County Permit Portal", "https://cvportal.collier.gov/cityviewweb")
+    st.sidebar.link_button("Go to Collier County Permit Portal", "https://cvportal.collier.gov/cityviewweb", use_container_width=True)
 elif selected_county == "Charlotte":
-    st.sidebar.link_button("Go to Charlotte County Permit Portal", "https://aca-prod.accela.com/bocc/default.aspx")
+    st.sidebar.link_button("Go to Charlotte County Permit Portal", "https://aca-prod.accela.com/bocc/default.aspx", use_container_width=True)
 
 st.sidebar.markdown("---")
-generate_leads = st.sidebar.button("Fetch Deep Records & Map")
 
 # --- LIVE ATTOM API ENGINE ---
 def fetch_deep_attom_records(zip_code, min_age):
@@ -172,6 +176,7 @@ if generate_leads:
                 data=csv,
                 file_name=f'roofing_leads_{selected_zip}.csv',
                 mime='text/csv',
+                use_container_width=True
             )
         else:
             st.warning("Pulled sample records, but none matched your Year Built filter. Try adjusting the slider.")
