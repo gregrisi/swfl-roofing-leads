@@ -7,7 +7,6 @@ import time
 # --- CONFIGURATION & SETUP ---
 st.set_page_config(page_title="SWFL Roofing Lead Generator | LIVE", layout="wide")
 
-# --- GEOGRAPHY DATA DICTIONARY (County -> City -> Zip) ---
 GEOGRAPHY_DATA = {
     "Lee": {
         "Cape Coral": ["33904", "33909", "33914", "33990", "33991", "33993"],
@@ -34,13 +33,11 @@ st.markdown("**Powered by Live ATTOM API Data.** Target aging roofs down to the 
 
 st.sidebar.header("🎯 Targeting Parameters")
 
-# 1. Cascading Dropdown Interface
 st.sidebar.subheader("📍 Geographic Targeting")
 selected_county = st.sidebar.selectbox("1. Select County", list(GEOGRAPHY_DATA.keys()))
 selected_city = st.sidebar.selectbox("2. Select City", list(GEOGRAPHY_DATA[selected_county].keys()))
 selected_zip = st.sidebar.selectbox("3. Select Zip Code", GEOGRAPHY_DATA[selected_county][selected_city])
 
-# 2. Market Filters
 st.sidebar.subheader("🏠 Property Filters")
 min_home_age = st.sidebar.slider("Minimum Home Age (Years)", 0, 50, 15)
 
@@ -67,7 +64,6 @@ def fetch_deep_attom_records(zip_code, min_age):
     st.toast(f"Step 1: Locating properties in {zip_code}...")
     address_url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/address"
     
-    # Pulling 15 properties at a time for the map visual
     addr_params = {"postalcode": zip_code, "pagesize": 15} 
     
     try:
@@ -76,7 +72,7 @@ def fetch_deep_attom_records(zip_code, min_age):
         if addr_response.status_code == 200:
             basic_properties = addr_response.json().get('property', [])
             
-            st.toast(f"Step 2: Pulling structural data and GPS coordinates...")
+            st.toast(f"Step 2: Pulling structural data, GPS, and Owner Names...")
             progress_bar = st.progress(0)
             
             for index, prop in enumerate(basic_properties):
@@ -97,18 +93,21 @@ def fetch_deep_attom_records(zip_code, min_age):
                         full_prop = detail_data[0]
                         summary = full_prop.get('summary', {})
                         sale = full_prop.get('sale', {})
-                        location = full_prop.get('location', {}) # Grabbing GPS info
+                        location = full_prop.get('location', {})
+                        
+                        # Extracting the Owner Name safely
+                        owner = full_prop.get('owner', {})
+                        owner_name = owner.get('owner1FullName') or owner.get('owner1', {}).get('name', {}).get('fullName') or "Current Resident"
                         
                         year_built = summary.get('yearBuilt')
                         
                         if year_built and isinstance(year_built, int) and year_built <= max_year_built:
-                            # Verify we have lat/lon before adding to map
                             lat = location.get('latitude')
                             lon = location.get('longitude')
                             
-                            # Only add if valid coordinates exist
                             if lat and lon:
                                 leads.append({
+                                    "Homeowner": owner_name.title(), # Capitalizes the name cleanly
                                     "Site Address": add1,
                                     "City": full_prop.get('address', {}).get('locality', 'Unknown'),
                                     "Zip": zip_code,
@@ -133,23 +132,17 @@ def fetch_deep_attom_records(zip_code, min_age):
 # --- OUTPUT FOR SALES TEAM ---
 if generate_leads:
     with st.spinner("Executing API Pull and generating interactive map..."):
-        # We pass just the single selected_zip string
         df_leads = fetch_deep_attom_records(selected_zip, min_home_age)
         
         if not df_leads.empty:
             st.success(f"Successfully pinned {len(df_leads)} targeted leads in {selected_zip}!")
             
-            # --- INTERACTIVE MAP ---
-            # Streamlit automatically looks for 'latitude' and 'longitude' columns
             st.map(df_leads, zoom=13, use_container_width=True)
             
-            # --- DATA TABLE ---
             st.markdown("### Targeted Lead Details")
-            # We hide the raw lat/lon columns from the user table for a cleaner look
             display_df = df_leads.drop(columns=["latitude", "longitude"])
             st.dataframe(display_df, use_container_width=True)
             
-            # --- EXPORT ---
             csv = display_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download Lead Sheet (CSV)",
