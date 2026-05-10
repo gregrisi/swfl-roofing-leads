@@ -37,65 +37,71 @@ api_key = st.sidebar.text_input(f"{api_provider} API Key", type="password")
 generate_leads = st.sidebar.button("Fetch Live Records")
 
 # --- LIVE API ENGINE ---
-def fetch_live_records(county, cities, min_age, recent_sale_flag, provider, key):
-    """
-    Production function to call a Real Estate API.
-    Note: The exact URL and JSON mapping will depend on your specific provider's documentation.
-    """
-    
+import streamlit as st
+import pandas as pd
+import requests
+from datetime import datetime
+
+# --- LIVE ATTOM API ENGINE ---
+def fetch_attom_records(county, cities, min_age, recent_sale_flag):
+    # Retrieve the hidden API key from Streamlit Secrets
+    try:
+        api_key = st.secrets["ATTOM_API_KEY"]
+    except KeyError:
+        st.error("API Key not found. Please add it to Streamlit Secrets.")
+        return pd.DataFrame()
+
     current_year = datetime.now().year
     max_year_built = current_year - min_age
     
-    # Example: Structuring the API Request for a standard provider like ATTOM
-    api_url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/expandedprofile"
+    # ATTOM's Snapshot endpoint is ideal for searching entire cities by criteria
+    api_url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/snapshot"
     
     headers = {
         "accept": "application/json",
-        "apikey": key
+        "apikey": api_key
     }
     
     leads = []
     
-    # We iterate through the selected cities to pull data
     for city in cities:
-        # These parameters map to the API's required formatting
         params = {
-            "address1": city,
-            "state": "FL",
-            "county": county,
+            "cityname": city,
             "minYearBuilt": 1900,
-            "maxYearBuilt": max_year_built
+            "maxYearBuilt": max_year_built,
+            # Limits the return to keep our app fast and avoid burning through free limits
+            "pagesize": 50 
         }
         
         try:
-            # Execute the live network request
             response = requests.get(api_url, headers=headers, params=params)
             
-            # Check if the API accepted our key and parameters
             if response.status_code == 200:
                 data = response.json()
                 
-                # Parse the complex JSON response into a simple format for sales
-                # (This parsing logic is a template and must be aligned with the provider's exact JSON structure)
+                # Parsing ATTOM's specific JSON structure
                 for property in data.get('property', []):
-                    last_sale_date = property.get('sale', {}).get('saleSearchDate', 'Unknown')
+                    # Basic property characteristics
+                    address = property.get('address', {})
+                    summary = property.get('summary', {})
+                    sale = property.get('sale', {})
                     
                     leads.append({
-                        "Homeowner(s)": property.get('owner', {}).get('owner1FullName', 'Public Record'),
-                        "Site Address": property.get('address', {}).get('line1', 'Unknown'),
-                        "City": city,
-                        "Zip": property.get('address', {}).get('postal1', 'Unknown'),
-                        "Year Built": property.get('summary', {}).get('yearBuilt', 'Unknown'),
-                        "Last Sale Date": last_sale_date,
-                        "Absentee Owner": "Yes" if property.get('summary', {}).get('absenteeInd') == "Y" else "No"
+                        "Site Address": address.get('line1', 'Unknown'),
+                        "City": address.get('locality', city),
+                        "Zip": address.get('postal1', 'Unknown'),
+                        "Year Built": summary.get('yearBuilt', 'Unknown'),
+                        "Est. Value": summary.get('avm', {}).get('amount', {}).get('value', 'N/A'),
+                        "Last Sale Date": sale.get('saleSearchDate', 'Unknown'),
+                        "Absentee Owner": "Yes" if summary.get('absenteeInd') == "Y" else "No"
                     })
             else:
-                st.error(f"API Error {response.status_code}: Please check your API Key and subscription limits.")
-                return pd.DataFrame()
+                st.error(f"ATTOM API Error {response.status_code}: {response.text}")
+                break # Stop querying if we hit an error (like a rate limit)
                 
         except Exception as e:
-            st.error(f"Network error connecting to API: {e}")
-            return pd.DataFrame()
+            st.error(f"Network error connecting to ATTOM: {e}")
+            break
             
     return pd.DataFrame(leads)
 
