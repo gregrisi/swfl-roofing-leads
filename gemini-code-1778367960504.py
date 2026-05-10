@@ -43,10 +43,10 @@ min_home_age = st.sidebar.slider("Minimum Home Age (Years)", 0, 50, 15)
 
 st.sidebar.markdown("---")
 
-# --- MOVED UP: PRIMARY ACTION BUTTON ---
+# --- PRIMARY ACTION BUTTON ---
 generate_leads = st.sidebar.button("Fetch Deep Records & Map", type="primary", use_container_width=True)
 
-# --- MOVED DOWN: DYNAMIC PERMIT PORTAL LINKS ---
+# --- DYNAMIC PERMIT PORTAL LINKS ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 Public Permit Verification")
 st.sidebar.markdown("Verify recent roof permits before knocking.")
@@ -104,20 +104,20 @@ def fetch_deep_attom_records(zip_code, min_age):
                 
                 detail_response = requests.get(detail_url, headers=headers, params=detail_params)
                 
-if detail_response.status_code == 200:
+                if detail_response.status_code == 200:
                     detail_data = detail_response.json().get('property', [])
                     if detail_data:
                         full_prop = detail_data[0]
                         
-                        # --- GRABBING THE DATA BLOCKS ---
+                        # --- EXTRACTING ALL DATA BLOCKS ---
                         summary = full_prop.get('summary', {})
                         sale = full_prop.get('sale', {})
                         location = full_prop.get('location', {})
                         building = full_prop.get('building', {})
                         assessment = full_prop.get('assessment', {})
-                        
-                        # Aggressive Owner Parsing
                         owner = full_prop.get('owner', {})
+                        
+                        # --- AGGRESSIVE OWNER PARSING ---
                         owner_name = (
                             owner.get('owner1FullName') or 
                             owner.get('owner1', {}).get('fullName') or 
@@ -126,9 +126,14 @@ if detail_response.status_code == 200:
                             owner.get('owner2FullName')
                         )
                         final_name = str(owner_name).title().strip() if owner_name else "Public Record / Resident"
+                        
+                        # --- SAFE FINANCIAL PARSING ---
+                        assessed_amt = assessment.get('assessed', {}).get('assessedAmt')
+                        est_value = f"${int(assessed_amt):,}" if assessed_amt else "Unknown"
                             
                         year_built = summary.get('yearBuilt')
                         
+                        # --- AGE FILTER & APPEND ---
                         if year_built and isinstance(year_built, int) and year_built <= max_year_built:
                             lat = location.get('latitude')
                             lon = location.get('longitude')
@@ -139,11 +144,11 @@ if detail_response.status_code == 200:
                                     "Site Address": add1,
                                     "City": full_prop.get('address', {}).get('locality', 'Unknown'),
                                     "Zip": zip_code,
-                                    "Property Type": summary.get('propclass', 'Unknown'), # NEW
+                                    "Property Type": summary.get('propclass', 'Unknown'),
                                     "Year Built": year_built,
-                                    "Sq Ft": building.get('size', {}).get('bldgsize', 'Unknown'), # NEW
-                                    "Stories": building.get('summary', {}).get('levels', '1'), # NEW
-                                    "Est. Value": f"${assessment.get('assessed', {}).get('assessedAmt', 0):,}", # NEW (Formatted as Currency)
+                                    "Sq Ft": building.get('size', {}).get('bldgsize', 'Unknown'),
+                                    "Stories": building.get('summary', {}).get('levels', '1'),
+                                    "Est. Value": est_value,
                                     "Last Sale Date": sale.get('saleSearchDate', 'Unknown'),
                                     "Absentee": "Yes" if summary.get('absenteeInd') == "Y" else "No",
                                     "latitude": float(lat),
