@@ -43,7 +43,8 @@ def fetch_attom_records(county, cities, min_age):
     current_year = datetime.now().year
     max_year_built = current_year - min_age
     
-    api_url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/snapshot"
+    # We are using the expandedprofile endpoint for broader geographic searches
+    api_url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/expandedprofile"
     
     headers = {
         "accept": "application/json",
@@ -53,21 +54,19 @@ def fetch_attom_records(county, cities, min_age):
     leads = []
     
     for city in cities:
-        # We ask for a general snapshot of the city without strict URL filters
+        # THE FIX: ATTOM requires City and State combined into the 'address2' parameter
         params = {
-            "cityname": city,
+            "address2": f"{city}, FL",
             "pagesize": 50 
         }
         
         try:
             response = requests.get(api_url, headers=headers, params=params)
             
-            # Handling ATTOM's famous 400 error quirk gracefully
             if response.status_code == 400:
                 try:
                     error_msg = response.json().get('status', {}).get('msg', '')
                     if error_msg == 'SuccessWithoutResult':
-                        # 0 matches in this city. Skip to the next city without crashing!
                         continue
                     else:
                         st.warning(f"ATTOM rejected {city}. Reason: {error_msg}")
@@ -78,7 +77,6 @@ def fetch_attom_records(county, cities, min_age):
             elif response.status_code == 200:
                 data = response.json()
                 
-                # Parse ATTOM's specific JSON structure
                 for property in data.get('property', []):
                     address = property.get('address', {})
                     summary = property.get('summary', {})
@@ -86,7 +84,7 @@ def fetch_attom_records(county, cities, min_age):
                     
                     year_built = summary.get('yearBuilt')
                     
-                    # FILTERING MAGIC: We do the age filtering here in Python instead of the API
+                    # Filtering by age locally in Python to prevent API crashes
                     if year_built and isinstance(year_built, int) and year_built <= max_year_built:
                         leads.append({
                             "Site Address": address.get('line1', 'Unknown'),
