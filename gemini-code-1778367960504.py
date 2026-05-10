@@ -41,6 +41,19 @@ selected_zip = st.sidebar.selectbox("3. Select Zip Code", GEOGRAPHY_DATA[selecte
 st.sidebar.subheader("🏠 Property Filters")
 min_home_age = st.sidebar.slider("Minimum Home Age (Years)", 0, 50, 15)
 
+# --- NEW: DYNAMIC PERMIT PORTAL LINKS ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔍 Public Permit Verification")
+st.sidebar.markdown("Verify recent roof permits before knocking.")
+
+if selected_county == "Lee":
+    st.sidebar.link_button("Go to Lee County Permit Portal", "https://aca-prod.accela.com/LEECO/Default.aspx")
+elif selected_county == "Collier":
+    st.sidebar.link_button("Go to Collier County Permit Portal", "https://cvportal.collier.gov/cityviewweb")
+elif selected_county == "Charlotte":
+    st.sidebar.link_button("Go to Charlotte County Permit Portal", "https://aca-prod.accela.com/bocc/default.aspx")
+
+st.sidebar.markdown("---")
 generate_leads = st.sidebar.button("Fetch Deep Records & Map")
 
 # --- LIVE ATTOM API ENGINE ---
@@ -95,26 +108,20 @@ def fetch_deep_attom_records(zip_code, min_age):
                         sale = full_prop.get('sale', {})
                         location = full_prop.get('location', {})
                         
-                        # --- THE FIX: AGGRESSIVE OWNER PARSING ---
                         owner = full_prop.get('owner', {})
-                        
-                        # We hunt through every possible configuration ATTOM might use
                         owner_name = (
                             owner.get('owner1FullName') or 
                             owner.get('owner1', {}).get('fullName') or 
                             owner.get('owner1', {}).get('name', {}).get('fullName') or
-                            owner.get('corporateName') or # Catches LLCs and Trusts
+                            owner.get('corporateName') or 
                             owner.get('owner2FullName')
                         )
                         
-                        # Clean up the name if we found one
                         if owner_name:
                             final_name = str(owner_name).title().strip()
                         else:
                             final_name = "Public Record / Resident"
                             
-                        # -----------------------------------------
-                        
                         year_built = summary.get('yearBuilt')
                         
                         if year_built and isinstance(year_built, int) and year_built <= max_year_built:
