@@ -34,7 +34,6 @@ generate_leads = st.sidebar.button("Fetch Live Records")
 
 # --- LIVE ATTOM API ENGINE ---
 def fetch_attom_records(county, cities, min_age):
-    # Retrieve the hidden API key from Streamlit Secrets securely
     try:
         api_key = st.secrets["ATTOM_API_KEY"]
     except KeyError:
@@ -44,7 +43,6 @@ def fetch_attom_records(county, cities, min_age):
     current_year = datetime.now().year
     max_year_built = current_year - min_age
     
-    # ATTOM's Snapshot endpoint
     api_url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/snapshot"
     
     headers = {
@@ -55,17 +53,29 @@ def fetch_attom_records(county, cities, min_age):
     leads = []
     
     for city in cities:
+        # We ask for a general snapshot of the city without strict URL filters
         params = {
             "cityname": city,
-            "minYearBuilt": 1900,
-            "maxYearBuilt": max_year_built,
-            "pagesize": 50 # Limits return to keep app fast and protect free limits
+            "pagesize": 50 
         }
         
         try:
             response = requests.get(api_url, headers=headers, params=params)
             
-            if response.status_code == 200:
+            # Handling ATTOM's famous 400 error quirk gracefully
+            if response.status_code == 400:
+                try:
+                    error_msg = response.json().get('status', {}).get('msg', '')
+                    if error_msg == 'SuccessWithoutResult':
+                        # 0 matches in this city. Skip to the next city without crashing!
+                        continue
+                    else:
+                        st.warning(f"ATTOM rejected {city}. Reason: {error_msg}")
+                        continue
+                except:
+                    continue
+                    
+            elif response.status_code == 200:
                 data = response.json()
                 
                 # Parse ATTOM's specific JSON structure
@@ -74,21 +84,25 @@ def fetch_attom_records(county, cities, min_age):
                     summary = property.get('summary', {})
                     sale = property.get('sale', {})
                     
-                    leads.append({
-                        "Site Address": address.get('line1', 'Unknown'),
-                        "City": address.get('locality', city),
-                        "Zip": address.get('postal1', 'Unknown'),
-                        "Year Built": summary.get('yearBuilt', 'Unknown'),
-                        "Last Sale Date": sale.get('saleSearchDate', 'Unknown'),
-                        "Absentee Owner": "Yes" if summary.get('absenteeInd') == "Y" else "No"
-                    })
+                    year_built = summary.get('yearBuilt')
+                    
+                    # FILTERING MAGIC: We do the age filtering here in Python instead of the API
+                    if year_built and isinstance(year_built, int) and year_built <= max_year_built:
+                        leads.append({
+                            "Site Address": address.get('line1', 'Unknown'),
+                            "City": address.get('locality', city),
+                            "Zip": address.get('postal1', 'Unknown'),
+                            "Year Built": year_built,
+                            "Last Sale Date": sale.get('saleSearchDate', 'Unknown'),
+                            "Absentee Owner": "Yes" if summary.get('absenteeInd') == "Y" else "No"
+                        })
             else:
-                st.error(f"ATTOM API Error {response.status_code}. You may have hit your rate limit or the key is invalid.")
-                break
+                st.warning(f"Skipping {city}: API Error {response.status_code}")
+                continue
                 
         except Exception as e:
-            st.error(f"Network error connecting to ATTOM: {e}")
-            break
+            st.error(f"Network error connecting to ATTOM for {city}: {e}")
+            continue
             
     return pd.DataFrame(leads)
 
