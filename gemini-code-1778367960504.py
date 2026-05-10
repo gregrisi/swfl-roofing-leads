@@ -95,9 +95,25 @@ def fetch_deep_attom_records(zip_code, min_age):
                         sale = full_prop.get('sale', {})
                         location = full_prop.get('location', {})
                         
-                        # Extracting the Owner Name safely
+                        # --- THE FIX: AGGRESSIVE OWNER PARSING ---
                         owner = full_prop.get('owner', {})
-                        owner_name = owner.get('owner1FullName') or owner.get('owner1', {}).get('name', {}).get('fullName') or "Current Resident"
+                        
+                        # We hunt through every possible configuration ATTOM might use
+                        owner_name = (
+                            owner.get('owner1FullName') or 
+                            owner.get('owner1', {}).get('fullName') or 
+                            owner.get('owner1', {}).get('name', {}).get('fullName') or
+                            owner.get('corporateName') or # Catches LLCs and Trusts
+                            owner.get('owner2FullName')
+                        )
+                        
+                        # Clean up the name if we found one
+                        if owner_name:
+                            final_name = str(owner_name).title().strip()
+                        else:
+                            final_name = "Public Record / Resident"
+                            
+                        # -----------------------------------------
                         
                         year_built = summary.get('yearBuilt')
                         
@@ -107,7 +123,7 @@ def fetch_deep_attom_records(zip_code, min_age):
                             
                             if lat and lon:
                                 leads.append({
-                                    "Homeowner": owner_name.title(), # Capitalizes the name cleanly
+                                    "Homeowner": final_name,
                                     "Site Address": add1,
                                     "City": full_prop.get('address', {}).get('locality', 'Unknown'),
                                     "Zip": zip_code,
