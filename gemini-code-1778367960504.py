@@ -104,14 +104,19 @@ def fetch_deep_attom_records(zip_code, min_age):
                 
                 detail_response = requests.get(detail_url, headers=headers, params=detail_params)
                 
-                if detail_response.status_code == 200:
+if detail_response.status_code == 200:
                     detail_data = detail_response.json().get('property', [])
                     if detail_data:
                         full_prop = detail_data[0]
+                        
+                        # --- GRABBING THE DATA BLOCKS ---
                         summary = full_prop.get('summary', {})
                         sale = full_prop.get('sale', {})
                         location = full_prop.get('location', {})
+                        building = full_prop.get('building', {})
+                        assessment = full_prop.get('assessment', {})
                         
+                        # Aggressive Owner Parsing
                         owner = full_prop.get('owner', {})
                         owner_name = (
                             owner.get('owner1FullName') or 
@@ -120,11 +125,7 @@ def fetch_deep_attom_records(zip_code, min_age):
                             owner.get('corporateName') or 
                             owner.get('owner2FullName')
                         )
-                        
-                        if owner_name:
-                            final_name = str(owner_name).title().strip()
-                        else:
-                            final_name = "Public Record / Resident"
+                        final_name = str(owner_name).title().strip() if owner_name else "Public Record / Resident"
                             
                         year_built = summary.get('yearBuilt')
                         
@@ -138,9 +139,13 @@ def fetch_deep_attom_records(zip_code, min_age):
                                     "Site Address": add1,
                                     "City": full_prop.get('address', {}).get('locality', 'Unknown'),
                                     "Zip": zip_code,
+                                    "Property Type": summary.get('propclass', 'Unknown'), # NEW
                                     "Year Built": year_built,
+                                    "Sq Ft": building.get('size', {}).get('bldgsize', 'Unknown'), # NEW
+                                    "Stories": building.get('summary', {}).get('levels', '1'), # NEW
+                                    "Est. Value": f"${assessment.get('assessed', {}).get('assessedAmt', 0):,}", # NEW (Formatted as Currency)
                                     "Last Sale Date": sale.get('saleSearchDate', 'Unknown'),
-                                    "Absentee Owner": "Yes" if summary.get('absenteeInd') == "Y" else "No",
+                                    "Absentee": "Yes" if summary.get('absenteeInd') == "Y" else "No",
                                     "latitude": float(lat),
                                     "longitude": float(lon)
                                 })
