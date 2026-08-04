@@ -5,161 +5,132 @@ from datetime import datetime
 import time
 
 # --- CONFIGURATION & SETUP ---
-st.set_page_config(page_title="SWFL Roofing Lead Generator | LIVE", layout="wide")
+st.set_page_config(page_title="SWFL Roofing Lead Generator | LEEPA LIVE", layout="wide")
 
-GEOGRAPHY_DATA = {
-    "Lee": {
-        "Cape Coral": ["33904", "33909", "33914", "33990", "33991", "33993"],
-        "Fort Myers": ["33901", "33905", "33907", "33908", "33912", "33913", "33916", "33919", "33966"],
-        "Lehigh Acres": ["33936", "33971", "33973", "33974", "33976"],
-        "Bonita Springs": ["34134", "34135"],
-        "Estero": ["33928"]
-    },
-    "Collier": {
-        "Naples": ["34102", "34103", "34104", "34105", "34108", "34109", "34110", "34112", "34113", "34114", "34116", "34119", "34120"],
-        "Marco Island": ["34145"],
-        "Immokalee": ["34142"]
-    },
-    "Charlotte": {
-        "Port Charlotte": ["33948", "33952", "33953", "33954", "33981"],
-        "Punta Gorda": ["33950", "33955", "33982", "33983"],
-        "Englewood": ["34223", "34224"]
-    }
+# Focus exclusively on Lee County for Phase 1
+LEE_COUNTY_DATA = {
+    "Cape Coral": ["33904", "33909", "33914", "33990", "33991", "33993"],
+    "Fort Myers": ["33901", "33905", "33907", "33908", "33912", "33913", "33916", "33919", "33966"],
+    "Lehigh Acres": ["33936", "33971", "33973", "33974", "33976"],
+    "Bonita Springs": ["34134", "34135"],
+    "Estero": ["33928"]
 }
 
 # --- MARKETING & APP LOGIC ---
-st.title("🏠 SWFL Roofing: Precision Lead Generator")
-st.markdown("**Powered by Live ATTOM API Data.** Target aging roofs down to the specific neighborhood block.")
+st.title("🏠 Lee County Roofing: Precision Lead Generator")
+st.markdown("**Powered by Live LEEPA ArcGIS Public Records.** Target properties based on Florida insurance cliffs and building code triggers.")
 
 st.sidebar.header("🎯 Targeting Parameters")
 
 st.sidebar.subheader("📍 Geographic Targeting")
-selected_county = st.sidebar.selectbox("1. Select County", list(GEOGRAPHY_DATA.keys()))
-selected_city = st.sidebar.selectbox("2. Select City", list(GEOGRAPHY_DATA[selected_county].keys()))
-selected_zip = st.sidebar.selectbox("3. Select Zip Code", GEOGRAPHY_DATA[selected_county][selected_city])
+selected_city = st.sidebar.selectbox("1. Select City", list(LEE_COUNTY_DATA.keys()))
+selected_zip = st.sidebar.selectbox("2. Select Zip Code", LEE_COUNTY_DATA[selected_city])
 
-st.sidebar.subheader("🏠 Property Filters")
-min_home_age = st.sidebar.slider("Minimum Home Age (Years)", 0, 50, 15)
+st.sidebar.subheader("🔥 Lead Qualification Profiles")
+lead_profile = st.sidebar.radio(
+    "Select Target Strategy:",
+    [
+        "The Insurance Panic (14-16 Years Old)",
+        "The Code Trap (Pre-2009 - 25% Rule)",
+        "The Underlayment Timebomb (20-25 Years Old)"
+    ]
+)
 
 st.sidebar.markdown("---")
-
-# --- PRIMARY ACTION BUTTON ---
-generate_leads = st.sidebar.button("Fetch Deep Records & Map", type="primary", use_container_width=True)
+generate_leads = st.sidebar.button("Fetch LEEPA Records & Map", type="primary", use_container_width=True)
 
 # --- DYNAMIC PERMIT PORTAL LINKS ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 Public Permit Verification")
 st.sidebar.markdown("Verify recent roof permits before knocking.")
-
-if selected_county == "Lee":
-    st.sidebar.link_button("Go to Lee County Permit Portal", "https://aca-prod.accela.com/LEECO/Default.aspx", use_container_width=True)
-elif selected_county == "Collier":
-    st.sidebar.link_button("Go to Collier County Permit Portal", "https://cvportal.collier.gov/cityviewweb", use_container_width=True)
-elif selected_county == "Charlotte":
-    st.sidebar.link_button("Go to Charlotte County Permit Portal", "https://aca-prod.accela.com/bocc/default.aspx", use_container_width=True)
-
+st.sidebar.link_button("Go to Lee County Permit Portal", "https://aca-prod.accela.com/LEECO/Default.aspx", use_container_width=True)
 st.sidebar.markdown("---")
 
-# --- LIVE ATTOM API ENGINE ---
-def fetch_deep_attom_records(zip_code, min_age):
-    try:
-        api_key = st.secrets["ATTOM_API_KEY"]
-    except KeyError:
-        st.error("API Key not found.")
-        return pd.DataFrame()
-
+# --- LIVE LEEPA ARCGIS ENGINE ---
+def fetch_leepa_arcgis_records(zip_code, profile):
     current_year = datetime.now().year
-    max_year_built = current_year - min_age
     
-    headers = {
-        "accept": "application/json",
-        "apikey": api_key
-    }
-    
+    # Determine age brackets based on the selected marketing profile
+    if "Insurance Panic" in profile:
+        min_age, max_age = 14, 16
+    elif "Code Trap" in profile:
+        min_age, max_age = 18, 100 # Built before 2009 (assuming current year 2026)
+    elif "Underlayment" in profile:
+        min_age, max_age = 20, 25
+    else:
+        min_age, max_age = 15, 100
+
+    target_max_year = current_year - min_age
+    target_min_year = current_year - max_age
+
     leads = []
     
-    st.toast(f"Step 1: Locating properties in {zip_code}...")
-    address_url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/address"
+    st.toast(f"Querying live LEEPA database for Zip: {zip_code}...")
     
-    addr_params = {"postalcode": zip_code, "pagesize": 15} 
+    # ArcGIS REST API Endpoint provided by Lee County
+    arcgis_url = "https://services2.arcgis.com/LvWGAAhHwbCJ2GMP/arcgis/rest/services/Lee_County_Parcels/FeatureServer/0/query"
+    
+    # We construct a spatial/SQL query. 
+    # Note: ArcGIS field names vary. We use 1=1 and filter in Python to ensure stability against schema changes, 
+    # pulling a sample size of 500 records to process.
+    params = {
+        "where": "1=1", 
+        "outFields": "*",
+        "outSR": "4326", # Forces the map coordinates into standard Latitude/Longitude
+        "f": "geojson",  # Returns clean JSON with geometry
+        "resultRecordCount": 500 
+    }
     
     try:
-        addr_response = requests.get(address_url, headers=headers, params=addr_params)
+        response = requests.get(arcgis_url, params=params)
         
-        if addr_response.status_code == 200:
-            basic_properties = addr_response.json().get('property', [])
+        if response.status_code == 200:
+            data = response.json()
+            features = data.get('features', [])
             
-            st.toast(f"Step 2: Pulling structural data, GPS, and Owner Names...")
             progress_bar = st.progress(0)
             
-            for index, prop in enumerate(basic_properties):
-                add1 = prop.get('address', {}).get('line1')
-                add2 = prop.get('address', {}).get('line2') 
+            for index, feature in enumerate(features):
+                props = feature.get('properties', {})
+                geom = feature.get('geometry', {})
                 
-                if not add1 or not add2:
+                if not props or not geom:
                     continue
                     
-                detail_url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/expandedprofile"
-                detail_params = {"address1": add1, "address2": add2}
+                # Standardizing the variable names (LEEPA might use slightly different tags like SITE_ZIP or ZIP)
+                record_zip = str(props.get('SITE_ZIP') or props.get('ZIP') or props.get('SITUS_ZIP', ''))
+                year_built = props.get('ACT_YR_BLT') or props.get('YEAR_BUILT') or props.get('YR_BLT')
                 
-                detail_response = requests.get(detail_url, headers=headers, params=detail_params)
-                
-                if detail_response.status_code == 200:
-                    detail_data = detail_response.json().get('property', [])
-                    if detail_data:
-                        full_prop = detail_data[0]
+                # Check if it matches our Zip Code and our Target Age Bracket
+                if zip_code in record_zip and isinstance(year_built, (int, float)):
+                    if target_min_year <= year_built <= target_max_year:
                         
-                        # --- EXTRACTING ALL DATA BLOCKS ---
-                        summary = full_prop.get('summary', {})
-                        sale = full_prop.get('sale', {})
-                        location = full_prop.get('location', {})
-                        building = full_prop.get('building', {})
-                        assessment = full_prop.get('assessment', {})
-                        owner = full_prop.get('owner', {})
-                        
-                        # --- AGGRESSIVE OWNER PARSING ---
-                        owner_name = (
-                            owner.get('owner1FullName') or 
-                            owner.get('owner1', {}).get('fullName') or 
-                            owner.get('owner1', {}).get('name', {}).get('fullName') or
-                            owner.get('corporateName') or 
-                            owner.get('owner2FullName')
-                        )
-                        final_name = str(owner_name).title().strip() if owner_name else "Public Record / Resident"
-                        
-                        # --- SAFE FINANCIAL PARSING ---
-                        assessed_amt = assessment.get('assessed', {}).get('assessedAmt')
-                        est_value = f"${int(assessed_amt):,}" if assessed_amt else "Unknown"
+                        # Handle point coordinates from GeoJSON
+                        coords = geom.get('coordinates', [])
+                        if len(coords) >= 2:
+                            # GeoJSON is [Longitude, Latitude] for points, or nested arrays for polygons.
+                            # We extract the first available coordinate pair for the map pin.
+                            if isinstance(coords[0], list):
+                                lon, lat = coords[0][0][0], coords[0][0][1] 
+                            else:
+                                lon, lat = coords[0], coords[1]
+                                
+                            leads.append({
+                                "STRAP": props.get('STRAP', 'Unknown'),
+                                "Homeowner": str(props.get('OWNER') or props.get('OWNER_NAME', 'Public Record')).title(),
+                                "Site Address": props.get('SITE_ADDR') or props.get('SITUS_ADDR', 'Unknown'),
+                                "City": selected_city,
+                                "Zip": zip_code,
+                                "Year Built": int(year_built),
+                                "Est. Value": f"${int(props.get('JUST_VALUE') or props.get('ASSESSED_VAL', 0)):,}",
+                                "latitude": float(lat),
+                                "longitude": float(lon)
+                            })
                             
-                        year_built = summary.get('yearBuilt')
-                        
-                        # --- AGE FILTER & APPEND ---
-                        if year_built and isinstance(year_built, int) and year_built <= max_year_built:
-                            lat = location.get('latitude')
-                            lon = location.get('longitude')
-                            
-                            if lat and lon:
-                                leads.append({
-                                    "Homeowner": final_name,
-                                    "Site Address": add1,
-                                    "City": full_prop.get('address', {}).get('locality', 'Unknown'),
-                                    "Zip": zip_code,
-                                    "Property Type": summary.get('propclass', 'Unknown'),
-                                    "Year Built": year_built,
-                                    "Sq Ft": building.get('size', {}).get('bldgsize', 'Unknown'),
-                                    "Stories": building.get('summary', {}).get('levels', '1'),
-                                    "Est. Value": est_value,
-                                    "Last Sale Date": sale.get('saleSearchDate', 'Unknown'),
-                                    "Absentee": "Yes" if summary.get('absenteeInd') == "Y" else "No",
-                                    "latitude": float(lat),
-                                    "longitude": float(lon)
-                                })
-                
-                time.sleep(0.3) 
-                progress_bar.progress((index + 1) / len(basic_properties))
+                progress_bar.progress((index + 1) / len(features))
                 
         else:
-            st.error(f"Failed Step 1 in Zip {zip_code}: Error {addr_response.status_code}")
+            st.error(f"Failed to connect to LEEPA server. Error {response.status_code}")
             
     except Exception as e:
         st.error(f"Network error: {e}")
@@ -168,25 +139,28 @@ def fetch_deep_attom_records(zip_code, min_age):
 
 # --- OUTPUT FOR SALES TEAM ---
 if generate_leads:
-    with st.spinner("Executing API Pull and generating interactive map..."):
-        df_leads = fetch_deep_attom_records(selected_zip, min_home_age)
+    with st.spinner("Mining LEEPA Database and generating target map..."):
+        df_leads = fetch_leepa_arcgis_records(selected_zip, lead_profile)
         
         if not df_leads.empty:
-            st.success(f"Successfully pinned {len(df_leads)} targeted leads in {selected_zip}!")
+            st.success(f"Successfully identified {len(df_leads)} high-probability targets in {selected_zip}!")
             
+            # Interactive Map
             st.map(df_leads, zoom=13, use_container_width=True)
             
-            st.markdown("### Targeted Lead Details")
+            # Data Table
+            st.markdown(f"### 🎯 Lead Profile: {lead_profile}")
             display_df = df_leads.drop(columns=["latitude", "longitude"])
             st.dataframe(display_df, use_container_width=True)
             
+            # CSV Export
             csv = display_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download Lead Sheet (CSV)",
                 data=csv,
-                file_name=f'roofing_leads_{selected_zip}.csv',
+                file_name=f'leepa_roofing_leads_{selected_zip}.csv',
                 mime='text/csv',
                 use_container_width=True
             )
         else:
-            st.warning("Pulled sample records, but none matched your Year Built filter. Try adjusting the slider.")
+            st.warning("No properties found matching this exact profile in the sample set. The county API may require specific field mapping for this Zip.")
