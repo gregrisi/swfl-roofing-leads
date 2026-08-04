@@ -15,17 +15,14 @@ LEE_COUNTY_DATA = {
     "Estero": ["33928"]
 }
 
-# --- MARKETING & APP LOGIC ---
 st.title("🏠 Lee County Roofing: Precision Lead Generator")
 st.markdown("**Powered by Live LEEPA ArcGIS Public Records.** Target properties based on Florida insurance cliffs and building code triggers.")
 
 st.sidebar.header("🎯 Targeting Parameters")
 
-st.sidebar.subheader("📍 Geographic Targeting")
 selected_city = st.sidebar.selectbox("1. Select City", list(LEE_COUNTY_DATA.keys()))
 selected_zip = st.sidebar.selectbox("2. Select Zip Code", LEE_COUNTY_DATA[selected_city])
 
-st.sidebar.subheader("🔥 Lead Qualification Profiles")
 lead_profile = st.sidebar.radio(
     "Select Target Strategy:",
     [
@@ -38,14 +35,7 @@ lead_profile = st.sidebar.radio(
 st.sidebar.markdown("---")
 generate_leads = st.sidebar.button("Fetch LEEPA Records & Map", type="primary", use_container_width=True)
 
-# --- DYNAMIC PERMIT PORTAL LINKS ---
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔍 Public Permit Verification")
-st.sidebar.markdown("Verify recent roof permits before knocking.")
-st.sidebar.link_button("Go to Lee County Permit Portal", "https://aca-prod.accela.com/LEECO/Default.aspx", use_container_width=True)
-st.sidebar.markdown("---")
-
-# --- LIVE LEEPA ARCGIS ENGINE ---
+# --- LIVE LEEPA ARCGIS ENGINE (DEBUG MODE) ---
 def fetch_leepa_arcgis_records(zip_code, profile):
     current_year = datetime.now().year
     
@@ -63,8 +53,6 @@ def fetch_leepa_arcgis_records(zip_code, profile):
 
     leads = []
     
-    # 1. DYNAMIC SCHEMA MAPPING
-    st.toast("Step 1: Analyzing Lee County Database Schema...")
     base_url = "https://services2.arcgis.com/LvWGAAhHwbCJ2GMP/arcgis/rest/services/Lee_County_Parcels/FeatureServer/0"
     
     try:
@@ -75,32 +63,40 @@ def fetch_leepa_arcgis_records(zip_code, profile):
             
         fields = [f.get('name', '').upper() for f in schema_response.json().get('fields', [])]
         
-        # Hunt for the exact column names Lee County is currently using
+        # DEBUG: Print the fields we found so we can see what LEEPA actually uses
+        st.info(f"**DEBUG - Available Database Columns:** {', '.join(fields[:15])}...")
+        
+        # Safer Field Mapping
         zip_field = next((f for f in fields if f in ['SITE_ZIP', 'ZIP', 'SITUS_ZIP', 'ZIP_CODE']), 'SITE_ZIP')
         year_field = next((f for f in fields if f in ['ACT_YR_BLT', 'YEAR_BUILT', 'YR_BLT']), 'ACT_YR_BLT')
         
-        st.toast(f"Step 2: Querying live data for {zip_code} targets...")
+        # Safer Query (Using "=" instead of "LIKE" and wrapping zip in quotes in case it's a string)
+        where_clause = f"{zip_field} = '{zip_code}' AND {year_field} >= {target_min_year} AND {year_field} <= {target_max_year}"
         
-        # 2. SERVER-SIDE FILTERING 
-        # We force the ArcGIS server to do the filtering, not our Python app, so we don't get 500 random records.
-        where_clause = f"{zip_field} LIKE '%{zip_code}%' AND {year_field} >= {target_min_year} AND {year_field} <= {target_max_year}"
+        st.info(f"**DEBUG - Executing Query:** {where_clause}")
         
         params = {
             "where": where_clause, 
             "outFields": "*",
             "outSR": "4326", 
             "f": "geojson",  
-            "resultRecordCount": 1000 # Increased payload size for dense zip codes
+            "resultRecordCount": 500 
         }
         
         response = requests.get(f"{base_url}/query", params=params)
         
         if response.status_code == 200:
             data = response.json()
+            
+            # DEBUG: Catch ArcGIS specific errors
+            if 'error' in data:
+                st.error(f"**ArcGIS Server Error:** {data['error'].get('message', 'Unknown Error')} - {data['error'].get('details', '')}")
+                return pd.DataFrame()
+
             features = data.get('features', [])
             
             if not features:
-                return pd.DataFrame() # Returns empty if literally zero houses match
+                return pd.DataFrame() 
                 
             progress_bar = st.progress(0)
             
@@ -111,7 +107,6 @@ def fetch_leepa_arcgis_records(zip_code, profile):
                 if not props or not geom:
                     continue
                     
-                # Handle point coordinates from GeoJSON
                 coords = geom.get('coordinates', [])
                 if len(coords) >= 2:
                     if isinstance(coords[0], list):
@@ -141,30 +136,16 @@ def fetch_leepa_arcgis_records(zip_code, profile):
         
     return pd.DataFrame(leads)
 
-# --- OUTPUT FOR SALES TEAM ---
 if generate_leads:
     with st.spinner("Mining LEEPA Database and generating target map..."):
         df_leads = fetch_leepa_arcgis_records(selected_zip, lead_profile)
         
         if not df_leads.empty:
             st.success(f"Successfully identified {len(df_leads)} high-probability targets in {selected_zip}!")
-            
-            # Interactive Map
             st.map(df_leads, zoom=13, use_container_width=True)
             
-            # Data Table
             st.markdown(f"### 🎯 Lead Profile: {lead_profile}")
             display_df = df_leads.drop(columns=["latitude", "longitude"])
             st.dataframe(display_df, use_container_width=True)
-            
-            # CSV Export
-            csv = display_df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Download Lead Sheet (CSV)",
-                data=csv,
-                file_name=f'leepa_roofing_leads_{selected_zip}.csv',
-                mime='text/csv',
-                use_container_width=True
-            )
         else:
-            st.warning("No properties found matching this exact profile. Adjust your filters and try again.")
+            st.warning("No properties found matching this exact profile.")
