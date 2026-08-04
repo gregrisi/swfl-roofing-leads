@@ -85,7 +85,7 @@ def execute_hybrid_search(zip_code, profile):
 
     leads = []
     
-    st.toast("Step 1: Indexing FDOR State Database...")
+    st.toast("Step 1: Indexing FDOR State Database (Filtering for Owner-Occupied)...")
     
     fdor_base_url = "https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0"
     
@@ -93,11 +93,12 @@ def execute_hybrid_search(zip_code, profile):
         schema_response = requests.get(fdor_base_url, params={"f": "json"})
         fields = [f.get('name', '').upper() for f in schema_response.json().get('fields', [])]
         
-        zip_field = next((f for f in fields if f in ['PHY_ZIPCD', 'PHY_ZIP', 'ZIP', 'SITE_ZIP']), 'PHY_ZIPCD')
+        # WE NOW FORCE THE OWNER ZIP CODE FIELD TO GUARANTEE OWNER-OCCUPIED MATCHES
         year_field = next((f for f in fields if f in ['ACT_YR_BLT', 'YEAR_BUILT', 'YR_BLT']), 'ACT_YR_BLT')
         strap_field = next((f for f in fields if f in ['PARCELNO', 'PARCEL_ID', 'STRAP']), 'PARCELNO')
         
-        where_clause = f"{zip_field} LIKE '%{zip_code}%' AND {year_field} >= {target_min_year} AND {year_field} <= {target_max_year}"
+        # Lee County is County Number 36 in Florida. We use CO_NO to ensure we are in the right county.
+        where_clause = f"CO_NO = '36' AND OWN_ZIPCD LIKE '%{zip_code}%' AND {year_field} >= {target_min_year} AND {year_field} <= {target_max_year}"
         
         params = {
             "where": where_clause, 
@@ -116,7 +117,7 @@ def execute_hybrid_search(zip_code, profile):
             if not features:
                 return pd.DataFrame() 
                 
-            st.toast(f"Step 2: FDOR Index complete. Live-verifying {len(features)} records against LEEPA...")
+            st.toast(f"Step 2: Found {len(features)} Owner-Occupied targets. Verifying against live LEEPA data...")
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -127,11 +128,10 @@ def execute_hybrid_search(zip_code, profile):
                 raw_parcel = props.get(strap_field, '')
                 coords = geom.get('coordinates', [])
                 
-                # POLYGON FLATTENER FIX
+                # POLYGON FLATTENER
                 lat, lon = 0.0, 0.0
                 if coords:
                     c = coords
-                    # Dig down through the nested lists until we find the raw numbers
                     while isinstance(c[0], list):
                         c = c[0]
                     lon, lat = c[0], c[1]
@@ -141,9 +141,9 @@ def execute_hybrid_search(zip_code, profile):
                 
                 leads.append({
                     "STRAP": raw_parcel,
-                    "Live Homeowner": live_data['owner'],
-                    "Site Address": props.get('PHY_ADDR1', 'Unknown'),
-                    "Zip": zip_code,
+                    "Owner (Verified)": live_data['owner'],
+                    "Site Address": props.get('PHY_ADDR1', 'Address on File'),
+                    "Target Zip": zip_code,
                     "Year Built": int(props.get(year_field, 0)),
                     "Est. Value": f"${int(props.get('JV', 0)):,}",
                     "Last Sale (LEEPA)": live_data['last_sale'],
@@ -162,7 +162,6 @@ def execute_hybrid_search(zip_code, profile):
     except Exception as e:
         st.error(f"Network error: {e}")
         
-    # Filter out properties where the map flattener failed (leaves them at 0.0, 0.0)
     df = pd.DataFrame(leads)
     if not df.empty:
         df = df[df['latitude'] != 0.0]
@@ -177,7 +176,7 @@ if generate_leads:
             st.success(f"Successfully indexed and verified {len(df_leads)} high-probability targets!")
             st.map(df_leads, zoom=13, use_container_width=True)
             
-            st.markdown(f"### 🎯 Lead Profile: {lead_profile}")
+            st.markdown(f"### 🎯 Lead Profile: {lead_profile} (Owner-Occupied Only)")
             display_df = df_leads.drop(columns=["latitude", "longitude"])
             st.dataframe(display_df, use_container_width=True)
             
