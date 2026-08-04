@@ -97,7 +97,6 @@ def execute_hybrid_search(zip_code, profile):
         year_field = next((f for f in fields if f in ['ACT_YR_BLT', 'YEAR_BUILT', 'YR_BLT']), 'ACT_YR_BLT')
         strap_field = next((f for f in fields if f in ['PARCELNO', 'PARCEL_ID', 'STRAP']), 'PARCELNO')
         
-        # Widened SQL Query: Sometimes state ZIPs are dirty, so we use LIKE
         where_clause = f"{zip_field} LIKE '%{zip_code}%' AND {year_field} >= {target_min_year} AND {year_field} <= {target_max_year}"
         
         params = {
@@ -119,6 +118,7 @@ def execute_hybrid_search(zip_code, profile):
                 
             st.toast(f"Step 2: FDOR Index complete. Live-verifying {len(features)} records against LEEPA...")
             progress_bar = st.progress(0)
+            status_text = st.empty()
             
             for index, feature in enumerate(features):
                 props = feature.get('properties', {})
@@ -127,34 +127,46 @@ def execute_hybrid_search(zip_code, profile):
                 raw_parcel = props.get(strap_field, '')
                 coords = geom.get('coordinates', [])
                 
-                if len(coords) >= 2:
-                    lon, lat = (coords[0][0][0], coords[0][0][1]) if isinstance(coords[0], list) else (coords[0], coords[1])
+                # POLYGON FLATTENER FIX
+                lat, lon = 0.0, 0.0
+                if coords:
+                    c = coords
+                    # Dig down through the nested lists until we find the raw numbers
+                    while isinstance(c[0], list):
+                        c = c[0]
+                    lon, lat = c[0], c[1]
                         
-                    live_data = scrape_leepa_details(raw_parcel)
-                    
-                    leads.append({
-                        "STRAP": raw_parcel,
-                        "Live Homeowner": live_data['owner'],
-                        "Site Address": props.get('PHY_ADDR1', 'Unknown'),
-                        "Zip": zip_code,
-                        "Year Built": int(props.get(year_field, 0)),
-                        "Est. Value": f"${int(props.get('JV', 0)):,}",
-                        "Last Sale (LEEPA)": live_data['last_sale'],
-                        "latitude": float(lat),
-                        "longitude": float(lon)
-                    })
-                    
-                    time.sleep(0.5) 
-                    
+                status_text.text(f"Scraping LEEPA record {index + 1} of {len(features)}...")
+                live_data = scrape_leepa_details(raw_parcel)
+                
+                leads.append({
+                    "STRAP": raw_parcel,
+                    "Live Homeowner": live_data['owner'],
+                    "Site Address": props.get('PHY_ADDR1', 'Unknown'),
+                    "Zip": zip_code,
+                    "Year Built": int(props.get(year_field, 0)),
+                    "Est. Value": f"${int(props.get('JV', 0)):,}",
+                    "Last Sale (LEEPA)": live_data['last_sale'],
+                    "latitude": float(lat),
+                    "longitude": float(lon)
+                })
+                
+                time.sleep(0.5) 
                 progress_bar.progress((index + 1) / len(features))
                 
+            status_text.text("Verification Complete.")
+                
         else:
-            st.error(f"Failed to connect to FDOR server.")
+            st.error(f"Failed to connect to FDOR server. Error {response.status_code}")
             
     except Exception as e:
         st.error(f"Network error: {e}")
         
-    return pd.DataFrame(leads)
+    # Filter out properties where the map flattener failed (leaves them at 0.0, 0.0)
+    df = pd.DataFrame(leads)
+    if not df.empty:
+        df = df[df['latitude'] != 0.0]
+    return df
 
 # --- OUTPUT FOR SALES TEAM ---
 if generate_leads:
@@ -168,6 +180,15 @@ if generate_leads:
             st.markdown(f"### 🎯 Lead Profile: {lead_profile}")
             display_df = df_leads.drop(columns=["latitude", "longitude"])
             st.dataframe(display_df, use_container_width=True)
+            
+            csv = display_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Lead Sheet (CSV)",
+                data=csv,
+                file_name=f'hybrid_roofing_leads_{selected_zip}.csv',
+                mime='text/csv',
+                use_container_width=True
+            )
         else:
             if "Insurance Panic" in lead_profile:
                 st.warning("⚠️ MARKET INSIGHT: 0 Results Found. The 14-16 year age bracket hits the 2010-2012 housing crash where almost no homes were built in Cape Coral. Switch to the 'Code Trap' profile to target the 2004-2006 boom!")
