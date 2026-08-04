@@ -76,13 +76,13 @@ def execute_hybrid_search(zip_code, profile):
     
     fdor_base_url = "https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0"
     
-    # Flexible SQL matching with wildcard LIKE clause
+    # Exact SQL pattern that verified 10 records in Diagnostic mode
     if "Code Trap" in profile:
-        where_clause = f"CO_NO = '36' AND (OWN_ZIPCD LIKE '%{zip_code}%' OR PHY_ZIPCD LIKE '%{zip_code}%') AND ACT_YR_BLT <= 2008 AND ACT_YR_BLT >= 1950"
+        where_clause = f"OWN_ZIPCD LIKE '%{zip_code}%' AND ACT_YR_BLT <= 2008 AND ACT_YR_BLT >= 1950"
     elif "Insurance Panic" in profile:
-        where_clause = f"CO_NO = '36' AND (OWN_ZIPCD LIKE '%{zip_code}%' OR PHY_ZIPCD LIKE '%{zip_code}%') AND ACT_YR_BLT >= 2010 AND ACT_YR_BLT <= 2012"
+        where_clause = f"OWN_ZIPCD LIKE '%{zip_code}%' AND ACT_YR_BLT >= 2010 AND ACT_YR_BLT <= 2012"
     else: # Underlayment
-        where_clause = f"CO_NO = '36' AND (OWN_ZIPCD LIKE '%{zip_code}%' OR PHY_ZIPCD LIKE '%{zip_code}%') AND ACT_YR_BLT >= 2001 AND ACT_YR_BLT <= 2006"
+        where_clause = f"OWN_ZIPCD LIKE '%{zip_code}%' AND ACT_YR_BLT >= 2001 AND ACT_YR_BLT <= 2006"
 
     try:
         params = {
@@ -112,8 +112,8 @@ def execute_hybrid_search(zip_code, profile):
                 geom = feature.get('geometry', {})
                 
                 raw_parcel = props.get('PARCEL_ID') or props.get('PARCELNO') or props.get('STRAP') or 'Unknown'
-                address = props.get('PHY_ADDR1') or props.get('BAS_STRT') or props.get('ATV_STRT') or f"Parcel #{raw_parcel}"
-                yr_built = props.get('ACT_YR_BLT') or props.get('YEAR_BUILT') or 0
+                address = props.get('BAS_STRT') or props.get('ATV_STRT') or f"Parcel #{raw_parcel}"
+                yr_built = props.get('ACT_YR_BLT') or 0
                 
                 coords = geom.get('coordinates', [])
                 lat, lon = 26.6406, -81.8723
