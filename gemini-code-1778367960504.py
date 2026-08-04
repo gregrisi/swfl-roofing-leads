@@ -91,7 +91,7 @@ def execute_hybrid_search(zip_code, profile):
     fdor_base_url = "https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0"
     
     try:
-        # Verified SQL query structure based on Diagnostic test
+        # Verified SQL query structure that passed Diagnostic test
         where_clause = f"CO_NO = '36' AND OWN_ZIPCD LIKE '%{zip_code}%' AND ACT_YR_BLT >= {target_min_year} AND ACT_YR_BLT <= {target_max_year}"
         
         params = {
@@ -119,17 +119,19 @@ def execute_hybrid_search(zip_code, profile):
                 props = feature.get('properties', {})
                 geom = feature.get('geometry', {})
                 
-                # Retrieve PARCEL_ID/PARCELNO from properties
-                raw_parcel = props.get('PARCEL_ID') or props.get('PARCELNO') or props.get('STRAP', 'Unknown')
+                # Retrieve PARCEL_ID safely
+                raw_parcel = props.get('PARCEL_ID') or props.get('PARCELNO') or props.get('STRAP') or 'Unknown'
                 
-                # BULLETPROOF GEOMETRY PARSER (Extracts lat/lon regardless of nesting level)
+                # Retrieve Address safely without breaking on missing keys
+                address = props.get('PHY_ADDR1') or props.get('BAS_STRT') or props.get('ATV_STRT') or f"Parcel #{raw_parcel}"
+                
+                # BULLETPROOF GEOMETRY PARSER
                 coords = geom.get('coordinates', [])
-                lat, lon = 26.6406, -81.8723 # Fallback center of Lee County if geometry is missing
+                lat, lon = 26.6406, -81.8723 # Default Cape Coral coordinates fallback
                 
                 if coords:
                     c = coords
                     try:
-                        # Recursively unwrap lists until we hit numerical coordinates
                         while isinstance(c, list) and len(c) > 0 and isinstance(c[0], list):
                             c = c[0]
                         if isinstance(c, list) and len(c) >= 2:
@@ -143,7 +145,7 @@ def execute_hybrid_search(zip_code, profile):
                 leads.append({
                     "STRAP": raw_parcel,
                     "Live Homeowner": live_data['owner'],
-                    "Site Address": props.get('PHY_ADDR1') or props.get('BAS_STRT', 'Address on File'),
+                    "Site Address": address,
                     "Zip Code": zip_code,
                     "Year Built": int(props.get('ACT_YR_BLT', 0)),
                     "Est. Value": f"${int(props.get('JV', 0)):,}",
@@ -161,7 +163,7 @@ def execute_hybrid_search(zip_code, profile):
             st.error(f"Failed to connect to FDOR server. Error {response.status_code}")
             
     except Exception as e:
-        st.error(f"Network error: {e}")
+        st.error(f"Execution Error: {e}")
         
     return pd.DataFrame(leads)
 
