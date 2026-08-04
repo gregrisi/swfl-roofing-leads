@@ -7,7 +7,6 @@ import time
 # --- CONFIGURATION & SETUP ---
 st.set_page_config(page_title="SWFL Roofing Lead Generator | LEEPA LIVE", layout="wide")
 
-# Focus exclusively on Lee County for Phase 1
 LEE_COUNTY_DATA = {
     "Cape Coral": ["33904", "33909", "33914", "33990", "33991", "33993"],
     "Fort Myers": ["33901", "33905", "33907", "33908", "33912", "33913", "33916", "33919", "33966"],
@@ -50,11 +49,10 @@ st.sidebar.markdown("---")
 def fetch_leepa_arcgis_records(zip_code, profile):
     current_year = datetime.now().year
     
-    # Determine age brackets based on the selected marketing profile
     if "Insurance Panic" in profile:
         min_age, max_age = 14, 16
     elif "Code Trap" in profile:
-        min_age, max_age = 18, 100 # Built before 2009 (assuming current year 2026)
+        min_age, max_age = 18, 100 
     elif "Underlayment" in profile:
         min_age, max_age = 20, 25
     else:
@@ -65,29 +63,45 @@ def fetch_leepa_arcgis_records(zip_code, profile):
 
     leads = []
     
-    st.toast(f"Querying live LEEPA database for Zip: {zip_code}...")
-    
-    # ArcGIS REST API Endpoint provided by Lee County
-    arcgis_url = "https://services2.arcgis.com/LvWGAAhHwbCJ2GMP/arcgis/rest/services/Lee_County_Parcels/FeatureServer/0/query"
-    
-    # We construct a spatial/SQL query. 
-    # Note: ArcGIS field names vary. We use 1=1 and filter in Python to ensure stability against schema changes, 
-    # pulling a sample size of 500 records to process.
-    params = {
-        "where": "1=1", 
-        "outFields": "*",
-        "outSR": "4326", # Forces the map coordinates into standard Latitude/Longitude
-        "f": "geojson",  # Returns clean JSON with geometry
-        "resultRecordCount": 500 
-    }
+    # 1. DYNAMIC SCHEMA MAPPING
+    st.toast("Step 1: Analyzing Lee County Database Schema...")
+    base_url = "https://services2.arcgis.com/LvWGAAhHwbCJ2GMP/arcgis/rest/services/Lee_County_Parcels/FeatureServer/0"
     
     try:
-        response = requests.get(arcgis_url, params=params)
+        schema_response = requests.get(base_url, params={"f": "json"})
+        if schema_response.status_code != 200:
+            st.error("Failed to read county database schema.")
+            return pd.DataFrame()
+            
+        fields = [f.get('name', '').upper() for f in schema_response.json().get('fields', [])]
+        
+        # Hunt for the exact column names Lee County is currently using
+        zip_field = next((f for f in fields if f in ['SITE_ZIP', 'ZIP', 'SITUS_ZIP', 'ZIP_CODE']), 'SITE_ZIP')
+        year_field = next((f for f in fields if f in ['ACT_YR_BLT', 'YEAR_BUILT', 'YR_BLT']), 'ACT_YR_BLT')
+        
+        st.toast(f"Step 2: Querying live data for {zip_code} targets...")
+        
+        # 2. SERVER-SIDE FILTERING 
+        # We force the ArcGIS server to do the filtering, not our Python app, so we don't get 500 random records.
+        where_clause = f"{zip_field} LIKE '%{zip_code}%' AND {year_field} >= {target_min_year} AND {year_field} <= {target_max_year}"
+        
+        params = {
+            "where": where_clause, 
+            "outFields": "*",
+            "outSR": "4326", 
+            "f": "geojson",  
+            "resultRecordCount": 1000 # Increased payload size for dense zip codes
+        }
+        
+        response = requests.get(f"{base_url}/query", params=params)
         
         if response.status_code == 200:
             data = response.json()
             features = data.get('features', [])
             
+            if not features:
+                return pd.DataFrame() # Returns empty if literally zero houses match
+                
             progress_bar = st.progress(0)
             
             for index, feature in enumerate(features):
@@ -97,36 +111,26 @@ def fetch_leepa_arcgis_records(zip_code, profile):
                 if not props or not geom:
                     continue
                     
-                # Standardizing the variable names (LEEPA might use slightly different tags like SITE_ZIP or ZIP)
-                record_zip = str(props.get('SITE_ZIP') or props.get('ZIP') or props.get('SITUS_ZIP', ''))
-                year_built = props.get('ACT_YR_BLT') or props.get('YEAR_BUILT') or props.get('YR_BLT')
-                
-                # Check if it matches our Zip Code and our Target Age Bracket
-                if zip_code in record_zip and isinstance(year_built, (int, float)):
-                    if target_min_year <= year_built <= target_max_year:
+                # Handle point coordinates from GeoJSON
+                coords = geom.get('coordinates', [])
+                if len(coords) >= 2:
+                    if isinstance(coords[0], list):
+                        lon, lat = coords[0][0][0], coords[0][0][1] 
+                    else:
+                        lon, lat = coords[0], coords[1]
                         
-                        # Handle point coordinates from GeoJSON
-                        coords = geom.get('coordinates', [])
-                        if len(coords) >= 2:
-                            # GeoJSON is [Longitude, Latitude] for points, or nested arrays for polygons.
-                            # We extract the first available coordinate pair for the map pin.
-                            if isinstance(coords[0], list):
-                                lon, lat = coords[0][0][0], coords[0][0][1] 
-                            else:
-                                lon, lat = coords[0], coords[1]
-                                
-                            leads.append({
-                                "STRAP": props.get('STRAP', 'Unknown'),
-                                "Homeowner": str(props.get('OWNER') or props.get('OWNER_NAME', 'Public Record')).title(),
-                                "Site Address": props.get('SITE_ADDR') or props.get('SITUS_ADDR', 'Unknown'),
-                                "City": selected_city,
-                                "Zip": zip_code,
-                                "Year Built": int(year_built),
-                                "Est. Value": f"${int(props.get('JUST_VALUE') or props.get('ASSESSED_VAL', 0)):,}",
-                                "latitude": float(lat),
-                                "longitude": float(lon)
-                            })
-                            
+                    leads.append({
+                        "STRAP": props.get('STRAP', 'Unknown'),
+                        "Homeowner": str(props.get('OWNER') or props.get('OWNER_NAME', 'Public Record')).title(),
+                        "Site Address": props.get('SITE_ADDR') or props.get('SITUS_ADDR', 'Unknown'),
+                        "City": selected_city,
+                        "Zip": zip_code,
+                        "Year Built": int(props.get(year_field, 0)),
+                        "Est. Value": f"${int(props.get('JUST_VALUE') or props.get('ASSESSED_VAL', 0)):,}",
+                        "latitude": float(lat),
+                        "longitude": float(lon)
+                    })
+                    
                 progress_bar.progress((index + 1) / len(features))
                 
         else:
@@ -163,4 +167,4 @@ if generate_leads:
                 use_container_width=True
             )
         else:
-            st.warning("No properties found matching this exact profile in the sample set. The county API may require specific field mapping for this Zip.")
+            st.warning("No properties found matching this exact profile. Adjust your filters and try again.")
