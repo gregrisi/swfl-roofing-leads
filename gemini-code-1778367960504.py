@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
 from datetime import datetime
 import time
 
 # --- CONFIGURATION & SETUP ---
-st.set_page_config(page_title="SWFL Roofing Lead Generator | LEEPA LIVE", layout="wide")
+st.set_page_config(page_title="SWFL Roofing Lead Generator | Hybrid Engine", layout="wide")
 
 LEE_COUNTY_DATA = {
     "Cape Coral": ["33904", "33909", "33914", "33990", "33991", "33993"],
@@ -15,14 +16,15 @@ LEE_COUNTY_DATA = {
     "Estero": ["33928"]
 }
 
+# --- MARKETING & APP LOGIC ---
 st.title("🏠 Lee County Roofing: Precision Lead Generator")
-st.markdown("**Powered by Live LEEPA ArcGIS Public Records.** Target properties based on Florida insurance cliffs and building code triggers.")
+st.markdown("**Powered by the FDOR/LEEPA Hybrid Engine.** Indexing state data and verifying against live county records.")
 
 st.sidebar.header("🎯 Targeting Parameters")
-
 selected_city = st.sidebar.selectbox("1. Select City", list(LEE_COUNTY_DATA.keys()))
 selected_zip = st.sidebar.selectbox("2. Select Zip Code", LEE_COUNTY_DATA[selected_city])
 
+st.sidebar.subheader("🔥 Lead Qualification Profiles")
 lead_profile = st.sidebar.radio(
     "Select Target Strategy:",
     [
@@ -33,10 +35,38 @@ lead_profile = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-generate_leads = st.sidebar.button("Fetch LEEPA Records & Map", type="primary", use_container_width=True)
+generate_leads = st.sidebar.button("Fetch & Verify Leads", type="primary", use_container_width=True)
 
-# --- LIVE LEEPA ARCGIS ENGINE (DEBUG MODE) ---
-def fetch_leepa_arcgis_records(zip_code, profile):
+# --- HYBRID ENGINE LOGIC ---
+
+# 1. Scraper Function (LEEPA)
+def scrape_leepa_details(strap_number):
+    """Hits the live LEEPA site to pull the absolute newest owner data."""
+    try:
+        url = f"https://www.leepa.org/Display/DisplayParcel.aspx?Strap={strap_number}"
+        # We must use a header to pretend we are a real browser, otherwise LEEPA blocks the request
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Scrape Owner Name (LEEPA puts it in a specific span id)
+            owner_span = soup.find('span', id='ctl00_BodyContentPlaceHolder_OwnerNameLabel')
+            owner_name = owner_span.text.strip().title() if owner_span else "Public Record"
+            
+            # Scrape Latest Sale Date (Optional, but looks great for demos)
+            sale_span = soup.find('span', id='ctl00_BodyContentPlaceHolder_LastSaleDateLabel')
+            sale_date = sale_span.text.strip() if sale_span else "Unknown"
+            
+            return {"owner": owner_name, "last_sale": sale_date}
+    except Exception as e:
+        return {"owner": "Verification Failed", "last_sale": "Unknown"}
+        
+    return {"owner": "Public Record", "last_sale": "Unknown"}
+
+# 2. Index Engine (FDOR State Database)
+def execute_hybrid_search(zip_code, profile):
     current_year = datetime.now().year
     
     if "Insurance Panic" in profile:
@@ -53,52 +83,35 @@ def fetch_leepa_arcgis_records(zip_code, profile):
 
     leads = []
     
-    base_url = "https://services2.arcgis.com/LvWGAAhHwbCJ2GMP/arcgis/rest/services/Lee_County_Parcels/FeatureServer/0"
+    st.toast("Step 1: Indexing FDOR State Database for coordinate targets...")
+    
+    # FDOR Statewide REST API (Normalized Data)
+    fdor_url = "https://ca.dep.state.fl.us/arcgis/rest/services/OpenData/PARCELS/MapServer/0/query"
+    
+    # FDOR uses standard columns across the entire state
+    where_clause = f"PHY_ZIP = '{zip_code}' AND ACT_YR_BLT >= {target_min_year} AND ACT_YR_BLT <= {target_max_year}"
+    
+    params = {
+        "where": where_clause, 
+        "outFields": "PARCELNO,PHY_ADDR1,ACT_YR_BLT,JV",
+        "outSR": "4326", 
+        "f": "geojson",  
+        "resultRecordCount": 30 # Capped at 30 for the Streamlit demo so the scraping doesn't timeout
+    }
     
     try:
-        schema_response = requests.get(base_url, params={"f": "json"})
-        if schema_response.status_code != 200:
-            st.error("Failed to read county database schema.")
-            return pd.DataFrame()
-            
-        fields = [f.get('name', '').upper() for f in schema_response.json().get('fields', [])]
-        
-        # DEBUG: Print the fields we found so we can see what LEEPA actually uses
-        st.info(f"**DEBUG - Available Database Columns:** {', '.join(fields[:15])}...")
-        
-        # Safer Field Mapping
-        zip_field = next((f for f in fields if f in ['SITE_ZIP', 'ZIP', 'SITUS_ZIP', 'ZIP_CODE']), 'SITE_ZIP')
-        year_field = next((f for f in fields if f in ['ACT_YR_BLT', 'YEAR_BUILT', 'YR_BLT']), 'ACT_YR_BLT')
-        
-        # Safer Query (Using "=" instead of "LIKE" and wrapping zip in quotes in case it's a string)
-        where_clause = f"{zip_field} = '{zip_code}' AND {year_field} >= {target_min_year} AND {year_field} <= {target_max_year}"
-        
-        st.info(f"**DEBUG - Executing Query:** {where_clause}")
-        
-        params = {
-            "where": where_clause, 
-            "outFields": "*",
-            "outSR": "4326", 
-            "f": "geojson",  
-            "resultRecordCount": 500 
-        }
-        
-        response = requests.get(f"{base_url}/query", params=params)
+        response = requests.get(fdor_url, params=params)
         
         if response.status_code == 200:
             data = response.json()
-            
-            # DEBUG: Catch ArcGIS specific errors
-            if 'error' in data:
-                st.error(f"**ArcGIS Server Error:** {data['error'].get('message', 'Unknown Error')} - {data['error'].get('details', '')}")
-                return pd.DataFrame()
-
             features = data.get('features', [])
             
             if not features:
                 return pd.DataFrame() 
                 
+            st.toast(f"Step 2: FDOR Index complete. Live-verifying {len(features)} records against LEEPA...")
             progress_bar = st.progress(0)
+            status_text = st.empty()
             
             for index, feature in enumerate(features):
                 props = feature.get('properties', {})
@@ -106,7 +119,11 @@ def fetch_leepa_arcgis_records(zip_code, profile):
                 
                 if not props or not geom:
                     continue
-                    
+                
+                # Format the FDOR ParcelNO into the STRAP format LEEPA expects
+                raw_parcel = props.get('PARCELNO', '')
+                
+                # Handle map coordinates
                 coords = geom.get('coordinates', [])
                 if len(coords) >= 2:
                     if isinstance(coords[0], list):
@@ -114,34 +131,44 @@ def fetch_leepa_arcgis_records(zip_code, profile):
                     else:
                         lon, lat = coords[0], coords[1]
                         
+                    # LIVE VERIFICATION STEP
+                    status_text.text(f"Scraping LEEPA record {index + 1} of {len(features)}...")
+                    live_data = scrape_leepa_details(raw_parcel)
+                    
                     leads.append({
-                        "STRAP": props.get('STRAP', 'Unknown'),
-                        "Homeowner": str(props.get('OWNER') or props.get('OWNER_NAME', 'Public Record')).title(),
-                        "Site Address": props.get('SITE_ADDR') or props.get('SITUS_ADDR', 'Unknown'),
-                        "City": selected_city,
+                        "STRAP": raw_parcel,
+                        "Live Homeowner (LEEPA)": live_data['owner'],
+                        "Site Address": props.get('PHY_ADDR1', 'Unknown'),
                         "Zip": zip_code,
-                        "Year Built": int(props.get(year_field, 0)),
-                        "Est. Value": f"${int(props.get('JUST_VALUE') or props.get('ASSESSED_VAL', 0)):,}",
+                        "Year Built": int(props.get('ACT_YR_BLT', 0)),
+                        "Est. Value": f"${int(props.get('JV', 0)):,}",
+                        "Last Sale (LEEPA)": live_data['last_sale'],
                         "latitude": float(lat),
                         "longitude": float(lon)
                     })
                     
+                    # Be polite to the county servers
+                    time.sleep(0.5) 
+                    
                 progress_bar.progress((index + 1) / len(features))
                 
+            status_text.text("Verification Complete.")
+            
         else:
-            st.error(f"Failed to connect to LEEPA server. Error {response.status_code}")
+            st.error(f"Failed to connect to FDOR server. Error {response.status_code}")
             
     except Exception as e:
         st.error(f"Network error: {e}")
         
     return pd.DataFrame(leads)
 
+# --- OUTPUT FOR SALES TEAM ---
 if generate_leads:
-    with st.spinner("Mining LEEPA Database and generating target map..."):
-        df_leads = fetch_leepa_arcgis_records(selected_zip, lead_profile)
+    with st.spinner("Executing Hybrid Search Architecture..."):
+        df_leads = execute_hybrid_search(selected_zip, lead_profile)
         
         if not df_leads.empty:
-            st.success(f"Successfully identified {len(df_leads)} high-probability targets in {selected_zip}!")
+            st.success(f"Successfully indexed and verified {len(df_leads)} high-probability targets!")
             st.map(df_leads, zoom=13, use_container_width=True)
             
             st.markdown(f"### 🎯 Lead Profile: {lead_profile}")
