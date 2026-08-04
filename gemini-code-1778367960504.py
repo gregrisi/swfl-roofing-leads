@@ -37,6 +37,13 @@ lead_profile = st.sidebar.radio(
 st.sidebar.markdown("---")
 generate_leads = st.sidebar.button("Fetch & Verify Leads", type="primary", use_container_width=True)
 
+# --- DYNAMIC PERMIT PORTAL LINKS ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔍 Public Permit Verification")
+st.sidebar.markdown("Verify recent roof permits before knocking.")
+st.sidebar.link_button("Go to Lee County Permit Portal", "https://aca-prod.accela.com/LEECO/Default.aspx", use_container_width=True)
+st.sidebar.markdown("---")
+
 # --- HYBRID ENGINE LOGIC ---
 
 # 1. Scraper Function (LEEPA)
@@ -44,18 +51,15 @@ def scrape_leepa_details(strap_number):
     """Hits the live LEEPA site to pull the absolute newest owner data."""
     try:
         url = f"https://www.leepa.org/Display/DisplayParcel.aspx?Strap={strap_number}"
-        # We must use a header to pretend we are a real browser, otherwise LEEPA blocks the request
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Scrape Owner Name (LEEPA puts it in a specific span id)
             owner_span = soup.find('span', id='ctl00_BodyContentPlaceHolder_OwnerNameLabel')
             owner_name = owner_span.text.strip().title() if owner_span else "Public Record"
             
-            # Scrape Latest Sale Date (Optional, but looks great for demos)
             sale_span = soup.find('span', id='ctl00_BodyContentPlaceHolder_LastSaleDateLabel')
             sale_date = sale_span.text.strip() if sale_span else "Unknown"
             
@@ -83,24 +87,38 @@ def execute_hybrid_search(zip_code, profile):
 
     leads = []
     
-    st.toast("Step 1: Indexing FDOR State Database for coordinate targets...")
+    st.toast("Step 1: Indexing FDOR State Database schema...")
     
-    # FDOR Statewide REST API (Normalized Data)
-    fdor_url = "https://ca.dep.state.fl.us/arcgis/rest/services/OpenData/PARCELS/MapServer/0/query"
-    
-    # FDOR uses standard columns across the entire state
-    where_clause = f"PHY_ZIP = '{zip_code}' AND ACT_YR_BLT >= {target_min_year} AND ACT_YR_BLT <= {target_max_year}"
-    
-    params = {
-        "where": where_clause, 
-        "outFields": "PARCELNO,PHY_ADDR1,ACT_YR_BLT,JV",
-        "outSR": "4326", 
-        "f": "geojson",  
-        "resultRecordCount": 30 # Capped at 30 for the Streamlit demo so the scraping doesn't timeout
-    }
+    # NEW FL State Database URL
+    fdor_base_url = "https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0"
     
     try:
-        response = requests.get(fdor_url, params=params)
+        # Schema Check: Find exactly what the state named the Zip Code column this year
+        schema_response = requests.get(fdor_base_url, params={"f": "json"})
+        if schema_response.status_code != 200:
+            st.error("Failed to read state database schema.")
+            return pd.DataFrame()
+            
+        fields = [f.get('name', '').upper() for f in schema_response.json().get('fields', [])]
+        
+        zip_field = next((f for f in fields if f in ['PHY_ZIPCD', 'PHY_ZIP', 'ZIP', 'SITE_ZIP']), 'PHY_ZIPCD')
+        year_field = next((f for f in fields if f in ['ACT_YR_BLT', 'YEAR_BUILT', 'YR_BLT']), 'ACT_YR_BLT')
+        strap_field = next((f for f in fields if f in ['PARCELNO', 'PARCEL_ID', 'STRAP']), 'PARCELNO')
+        
+        st.toast(f"Step 2: Searching FDOR for {zip_code} targets...")
+        
+        # Build the exact query
+        where_clause = f"{zip_field} LIKE '%{zip_code}%' AND {year_field} >= {target_min_year} AND {year_field} <= {target_max_year}"
+        
+        params = {
+            "where": where_clause, 
+            "outFields": "*",
+            "outSR": "4326", 
+            "f": "geojson",  
+            "resultRecordCount": 30 # Capped at 30 so the Streamlit demo scraper doesn't timeout
+        }
+        
+        response = requests.get(f"{fdor_base_url}/query", params=params)
         
         if response.status_code == 200:
             data = response.json()
@@ -109,7 +127,7 @@ def execute_hybrid_search(zip_code, profile):
             if not features:
                 return pd.DataFrame() 
                 
-            st.toast(f"Step 2: FDOR Index complete. Live-verifying {len(features)} records against LEEPA...")
+            st.toast(f"Step 3: FDOR Index complete. Live-verifying {len(features)} records against LEEPA...")
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -120,10 +138,8 @@ def execute_hybrid_search(zip_code, profile):
                 if not props or not geom:
                     continue
                 
-                # Format the FDOR ParcelNO into the STRAP format LEEPA expects
-                raw_parcel = props.get('PARCELNO', '')
+                raw_parcel = props.get(strap_field, '')
                 
-                # Handle map coordinates
                 coords = geom.get('coordinates', [])
                 if len(coords) >= 2:
                     if isinstance(coords[0], list):
@@ -131,23 +147,22 @@ def execute_hybrid_search(zip_code, profile):
                     else:
                         lon, lat = coords[0], coords[1]
                         
-                    # LIVE VERIFICATION STEP
                     status_text.text(f"Scraping LEEPA record {index + 1} of {len(features)}...")
                     live_data = scrape_leepa_details(raw_parcel)
                     
+                    # Only append if we successfully get an owner from LEEPA
                     leads.append({
                         "STRAP": raw_parcel,
-                        "Live Homeowner (LEEPA)": live_data['owner'],
+                        "Live Homeowner": live_data['owner'],
                         "Site Address": props.get('PHY_ADDR1', 'Unknown'),
                         "Zip": zip_code,
-                        "Year Built": int(props.get('ACT_YR_BLT', 0)),
+                        "Year Built": int(props.get(year_field, 0)),
                         "Est. Value": f"${int(props.get('JV', 0)):,}",
                         "Last Sale (LEEPA)": live_data['last_sale'],
                         "latitude": float(lat),
                         "longitude": float(lon)
                     })
                     
-                    # Be polite to the county servers
                     time.sleep(0.5) 
                     
                 progress_bar.progress((index + 1) / len(features))
@@ -174,5 +189,15 @@ if generate_leads:
             st.markdown(f"### 🎯 Lead Profile: {lead_profile}")
             display_df = df_leads.drop(columns=["latitude", "longitude"])
             st.dataframe(display_df, use_container_width=True)
+            
+            # CSV Export
+            csv = display_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Lead Sheet (CSV)",
+                data=csv,
+                file_name=f'hybrid_roofing_leads_{selected_zip}.csv',
+                mime='text/csv',
+                use_container_width=True
+            )
         else:
-            st.warning("No properties found matching this exact profile.")
+            st.warning("No properties found matching this exact profile. Adjust filters or zip code.")
