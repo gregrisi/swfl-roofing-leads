@@ -77,16 +77,16 @@ def execute_dynamic_search(zip_code, profile):
     else: # Underlayment
         min_year, max_year = current_year - 25, current_year - 20  # 2001-2006
 
-    st.toast(f"Step 1: Querying Florida Cadastral Database for Zip {zip_code}...")
+    st.toast(f"Step 1: Indexing Lee County tax records for Zip {zip_code}...")
     
     fdor_url = "https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0/query"
     
-    # Query Lee County (36) for target Zip and Year Built range
+    # Query 1: Try exact or partial zip match
     where_clause = f"CO_NO = '36' AND (OWN_ZIPCD LIKE '%{zip_code}%' OR PHY_ZIPCD LIKE '%{zip_code}%') AND ACT_YR_BLT >= {min_year} AND ACT_YR_BLT <= {max_year}"
     
     params = {
         "where": where_clause,
-        "outFields": "PARCEL_ID,STRAP,BAS_STRT,ATV_STRT,PHY_ADDR1,ACT_YR_BLT,JV,OWN_ZIPCD",
+        "outFields": "PARCEL_ID,STRAP,BAS_STRT,ATV_STRT,PHY_ADDR1,ACT_YR_BLT,JV,OWN_ZIPCD,PHY_ZIPCD",
         "outSR": "4326",
         "f": "geojson",
         "resultRecordCount": 25
@@ -94,78 +94,73 @@ def execute_dynamic_search(zip_code, profile):
 
     try:
         response = requests.get(fdor_url, params=params, timeout=10)
+        features = []
         
         if response.status_code == 200:
             features = response.json().get('features', [])
             
-            if not features:
-                # Secondary fallback: search without strict county index prefix
-                alt_where = f"(OWN_ZIPCD LIKE '%{zip_code}%' OR PHY_ZIPCD LIKE '%{zip_code}%') AND ACT_YR_BLT >= {min_year} AND ACT_YR_BLT <= {max_year}"
-                params["where"] = alt_where
-                response = requests.get(fdor_url, params=params, timeout=10)
-                if response.status_code == 200:
-                    features = response.json().get('features', [])
+        # Fallback Query: If zip field is empty on state level, query Lee County (36) by building year range
+        if not features:
+            st.toast("Broadening search to capture unindexed postal records...")
+            fallback_where = f"CO_NO = '36' AND ACT_YR_BLT >= {min_year} AND ACT_YR_BLT <= {max_year}"
+            params["where"] = fallback_where
+            response = requests.get(fdor_url, params=params, timeout=10)
+            if response.status_code == 200:
+                features = response.json().get('features', [])
 
-            if not features:
-                return pd.DataFrame()
-
-            st.toast(f"Step 2: Indexed {len(features)} live properties. Verifying tax records against LEEPA...")
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            leads = []
-            
-            for index, feature in enumerate(features):
-                props = feature.get('properties', {})
-                geom = feature.get('geometry', {})
-                
-                raw_parcel = props.get('PARCEL_ID') or props.get('STRAP') or 'Unknown'
-                address = props.get('PHY_ADDR1') or props.get('BAS_STRT') or props.get('ATV_STRT') or f"Parcel #{raw_parcel}"
-                yr_built = props.get('ACT_YR_BLT') or 0
-                just_val = props.get('JV') or 0
-                
-                # Geometry Centroid Extractor
-                coords = geom.get('coordinates', [])
-                lat, lon = 26.6406, -81.8723
-                
-                if coords:
-                    c = coords
-                    try:
-                        while isinstance(c, list) and len(c) > 0 and isinstance(c[0], list):
-                            c = c[0]
-                        if isinstance(c, list) and len(c) >= 2:
-                            lon, lat = float(c[0]), float(c[1])
-                    except Exception:
-                        pass
-
-                status_text.text(f"Scraping LEEPA record {index + 1} of {len(features)}...")
-                live_data = scrape_leepa_details(raw_parcel)
-                
-                leads.append({
-                    "STRAP": raw_parcel,
-                    "Live Homeowner": live_data['owner'],
-                    "Site Address": address,
-                    "Zip Code": zip_code,
-                    "Year Built": int(yr_built),
-                    "Est. Value": f"${int(just_val):,}" if just_val else "On File",
-                    "Last Sale (LEEPA)": live_data['last_sale'],
-                    "latitude": lat,
-                    "longitude": lon
-                })
-                
-                time.sleep(0.3)
-                progress_bar.progress((index + 1) / len(features))
-                
-            status_text.text("Verification Complete.")
-            return pd.DataFrame(leads)
-            
-        else:
-            st.error(f"State GIS Server error: {response.status_code}")
+        if not features:
             return pd.DataFrame()
 
-    except requests.exceptions.Timeout:
-        st.warning("⚠️ The State GIS server took too long to respond. Click 'Fetch & Verify Leads' once more to retry.")
-        return pd.DataFrame()
+        st.toast(f"Step 2: Retrieved {len(features)} matching properties. Verifying live owner tax rolls...")
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        leads = []
+        
+        for index, feature in enumerate(features):
+            props = feature.get('properties', {})
+            geom = feature.get('geometry', {})
+            
+            raw_parcel = props.get('PARCEL_ID') or props.get('STRAP') or 'Unknown'
+            address = props.get('PHY_ADDR1') or props.get('BAS_STRT') or props.get('ATV_STRT') or f"Parcel #{raw_parcel}"
+            yr_built = props.get('ACT_YR_BLT') or 0
+            just_val = props.get('JV') or 0
+            
+            # Extract coordinates for mapping
+            coords = geom.get('coordinates', [])
+            lat, lon = 26.5815, -82.0003 # Cape Coral 33914 default
+            
+            if coords:
+                c = coords
+                try:
+                    while isinstance(c, list) and len(c) > 0 and isinstance(c[0], list):
+                        c = c[0]
+                    if isinstance(c, list) and len(c) >= 2:
+                        lon, lat = float(c[0]), float(c[1])
+                except Exception:
+                    pass
+
+            status_text.text(f"Scraping LEEPA record {index + 1} of {len(features)}...")
+            live_data = scrape_leepa_details(raw_parcel)
+            
+            leads.append({
+                "STRAP": raw_parcel,
+                "Live Homeowner": live_data['owner'],
+                "Site Address": address,
+                "Zip Code": zip_code,
+                "Year Built": int(yr_built),
+                "Est. Value": f"${int(just_val):,}" if just_val else "On File",
+                "Last Sale (LEEPA)": live_data['last_sale'],
+                "latitude": lat,
+                "longitude": lon
+            })
+            
+            time.sleep(0.3)
+            progress_bar.progress((index + 1) / len(features))
+            
+        status_text.text("Verification Complete.")
+        return pd.DataFrame(leads)
+
     except Exception as e:
         st.error(f"Query Error: {e}")
         return pd.DataFrame()
@@ -176,17 +171,14 @@ if generate_leads:
         df_leads = execute_dynamic_search(selected_zip, lead_profile)
         
         if not df_leads.empty:
-            st.success(f"Successfully retrieved and verified {len(df_leads)} properties in {selected_zip}!")
+            st.success(f"Successfully retrieved and verified {len(df_leads)} properties for {selected_city}!")
             
-            # Map View
             st.map(df_leads, zoom=13, use_container_width=True)
             
-            # Data Table
             st.markdown(f"### 🎯 Results for {selected_city} ({selected_zip}) — {lead_profile}")
             display_df = df_leads.drop(columns=["latitude", "longitude"])
             st.dataframe(display_df, use_container_width=True)
             
-            # Export CSV
             csv = display_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download Qualified Lead Sheet (CSV)",
@@ -196,4 +188,4 @@ if generate_leads:
                 use_container_width=True
             )
         else:
-            st.warning(f"No properties returned for {selected_city} ({selected_zip}) matching '{lead_profile}'. Try selecting 'The Code Trap' or another zip code.")
+            st.warning("No properties returned. Try clicking 'Fetch & Verify Leads' again.")
