@@ -72,17 +72,17 @@ def scrape_leepa_details(strap_number):
 def execute_hybrid_search(zip_code, profile):
     leads = []
     
-    st.toast("Step 1: Indexing FDOR State Database (Filtering Owner-Occupied)...")
+    st.toast("Step 1: Indexing FDOR State Database...")
     
     fdor_base_url = "https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0"
     
-    # EXACT SQL clause that produced 10 results in Diagnostic mode
+    # Flexible SQL matching with wildcard LIKE clause
     if "Code Trap" in profile:
-        where_clause = f"CO_NO = '36' AND OWN_ZIPCD = '{zip_code}' AND ACT_YR_BLT <= 2008 AND ACT_YR_BLT >= 1950"
+        where_clause = f"CO_NO = '36' AND (OWN_ZIPCD LIKE '%{zip_code}%' OR PHY_ZIPCD LIKE '%{zip_code}%') AND ACT_YR_BLT <= 2008 AND ACT_YR_BLT >= 1950"
     elif "Insurance Panic" in profile:
-        where_clause = f"CO_NO = '36' AND OWN_ZIPCD = '{zip_code}' AND ACT_YR_BLT >= 2010 AND ACT_YR_BLT <= 2012"
+        where_clause = f"CO_NO = '36' AND (OWN_ZIPCD LIKE '%{zip_code}%' OR PHY_ZIPCD LIKE '%{zip_code}%') AND ACT_YR_BLT >= 2010 AND ACT_YR_BLT <= 2012"
     else: # Underlayment
-        where_clause = f"CO_NO = '36' AND OWN_ZIPCD = '{zip_code}' AND ACT_YR_BLT >= 2001 AND ACT_YR_BLT <= 2006"
+        where_clause = f"CO_NO = '36' AND (OWN_ZIPCD LIKE '%{zip_code}%' OR PHY_ZIPCD LIKE '%{zip_code}%') AND ACT_YR_BLT >= 2001 AND ACT_YR_BLT <= 2006"
 
     try:
         params = {
@@ -111,18 +111,12 @@ def execute_hybrid_search(zip_code, profile):
                 props = feature.get('properties', {})
                 geom = feature.get('geometry', {})
                 
-                # Retrieve PARCEL_ID / STRAP safely
                 raw_parcel = props.get('PARCEL_ID') or props.get('PARCELNO') or props.get('STRAP') or 'Unknown'
-                
-                # Retrieve Address safely
                 address = props.get('PHY_ADDR1') or props.get('BAS_STRT') or props.get('ATV_STRT') or f"Parcel #{raw_parcel}"
-                
-                # Retrieve Built Year safely
                 yr_built = props.get('ACT_YR_BLT') or props.get('YEAR_BUILT') or 0
                 
-                # BULLETPROOF GEOMETRY PARSER
                 coords = geom.get('coordinates', [])
-                lat, lon = 26.6406, -81.8723 # Default Cape Coral coordinates fallback
+                lat, lon = 26.6406, -81.8723
                 
                 if coords:
                     c = coords
@@ -170,15 +164,12 @@ if generate_leads:
         if not df_leads.empty:
             st.success(f"Successfully indexed and verified {len(df_leads)} high-probability targets!")
             
-            # Interactive Map
             st.map(df_leads, zoom=13, use_container_width=True)
             
-            # Lead Table
-            st.markdown(f"### 🎯 Lead Profile: {lead_profile} (Owner-Occupied)")
+            st.markdown(f"### 🎯 Lead Profile: {lead_profile}")
             display_df = df_leads.drop(columns=["latitude", "longitude"])
             st.dataframe(display_df, use_container_width=True)
             
-            # Downloadable CSV Lead Sheet
             csv = display_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download Lead Sheet (CSV)",
