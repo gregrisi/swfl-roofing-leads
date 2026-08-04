@@ -50,7 +50,7 @@ def scrape_leepa_details(strap_number):
     """Hits the live LEEPA site to pull the absolute newest owner data."""
     try:
         url = f"https://www.leepa.org/Display/DisplayParcel.aspx?Strap={strap_number}"
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
@@ -70,36 +70,27 @@ def scrape_leepa_details(strap_number):
 
 
 def execute_hybrid_search(zip_code, profile):
-    current_year = datetime.now().year
-    
-    if "Insurance Panic" in profile:
-        min_age, max_age = 14, 16
-    elif "Code Trap" in profile:
-        min_age, max_age = 18, 100 
-    elif "Underlayment" in profile:
-        min_age, max_age = 20, 25
-    else:
-        min_age, max_age = 15, 100
-
-    target_max_year = current_year - min_age
-    target_min_year = current_year - max_age
-
     leads = []
     
     st.toast("Step 1: Indexing FDOR State Database (Filtering Owner-Occupied)...")
     
     fdor_base_url = "https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0"
     
+    # EXACT SQL clause that produced 10 results in Diagnostic mode
+    if "Code Trap" in profile:
+        where_clause = f"CO_NO = '36' AND OWN_ZIPCD = '{zip_code}' AND ACT_YR_BLT <= 2008 AND ACT_YR_BLT >= 1950"
+    elif "Insurance Panic" in profile:
+        where_clause = f"CO_NO = '36' AND OWN_ZIPCD = '{zip_code}' AND ACT_YR_BLT >= 2010 AND ACT_YR_BLT <= 2012"
+    else: # Underlayment
+        where_clause = f"CO_NO = '36' AND OWN_ZIPCD = '{zip_code}' AND ACT_YR_BLT >= 2001 AND ACT_YR_BLT <= 2006"
+
     try:
-        # Verified SQL query structure that passed Diagnostic test
-        where_clause = f"CO_NO = '36' AND OWN_ZIPCD LIKE '%{zip_code}%' AND ACT_YR_BLT >= {target_min_year} AND ACT_YR_BLT <= {target_max_year}"
-        
         params = {
             "where": where_clause, 
             "outFields": "*",
             "outSR": "4326", 
             "f": "geojson",  
-            "resultRecordCount": 30 
+            "resultRecordCount": 20 
         }
         
         response = requests.get(f"{fdor_base_url}/query", params=params)
@@ -109,6 +100,7 @@ def execute_hybrid_search(zip_code, profile):
             features = data.get('features', [])
             
             if not features:
+                st.info(f"Query Executed: `{where_clause}` | Zero features returned from GIS layer.")
                 return pd.DataFrame() 
                 
             st.toast(f"Step 2: FDOR Index returned {len(features)} matches. Verifying against live LEEPA data...")
@@ -119,11 +111,14 @@ def execute_hybrid_search(zip_code, profile):
                 props = feature.get('properties', {})
                 geom = feature.get('geometry', {})
                 
-                # Retrieve PARCEL_ID safely
+                # Retrieve PARCEL_ID / STRAP safely
                 raw_parcel = props.get('PARCEL_ID') or props.get('PARCELNO') or props.get('STRAP') or 'Unknown'
                 
-                # Retrieve Address safely without breaking on missing keys
+                # Retrieve Address safely
                 address = props.get('PHY_ADDR1') or props.get('BAS_STRT') or props.get('ATV_STRT') or f"Parcel #{raw_parcel}"
+                
+                # Retrieve Built Year safely
+                yr_built = props.get('ACT_YR_BLT') or props.get('YEAR_BUILT') or 0
                 
                 # BULLETPROOF GEOMETRY PARSER
                 coords = geom.get('coordinates', [])
@@ -147,7 +142,7 @@ def execute_hybrid_search(zip_code, profile):
                     "Live Homeowner": live_data['owner'],
                     "Site Address": address,
                     "Zip Code": zip_code,
-                    "Year Built": int(props.get('ACT_YR_BLT', 0)),
+                    "Year Built": int(yr_built),
                     "Est. Value": f"${int(props.get('JV', 0)):,}",
                     "Last Sale (LEEPA)": live_data['last_sale'],
                     "latitude": lat,
@@ -193,7 +188,4 @@ if generate_leads:
                 use_container_width=True
             )
         else:
-            if "Insurance Panic" in lead_profile:
-                st.warning("⚠️ MARKET INSIGHT: 0 Results Found. The 14-16 year age bracket hits the 2010-2012 housing crash where almost no homes were built in Cape Coral. Switch to the 'Code Trap' profile to target the 2004-2006 boom!")
-            else:
-                st.warning("No properties found matching this exact profile. Adjust filters or zip code.")
+            st.warning("No properties found matching this exact profile. Adjust filters or zip code.")
