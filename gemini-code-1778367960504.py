@@ -72,17 +72,17 @@ def scrape_leepa_details(strap_number):
 def execute_hybrid_search(zip_code, profile):
     leads = []
     
-    st.toast("Step 1: Indexing FDOR State Database...")
+    st.toast("Step 1: Indexing FDOR State Database (Lee County fast-index active)...")
     
     fdor_base_url = "https://services9.arcgis.com/Gh9awoU677aKree0/arcgis/rest/services/Florida_Statewide_Cadastral/FeatureServer/0"
     
-    # Exact SQL pattern that verified 10 records in Diagnostic mode
+    # County Filter CO_NO = '36' forces ArcGIS to use its indexed partition, avoiding 504 timeouts!
     if "Code Trap" in profile:
-        where_clause = f"OWN_ZIPCD LIKE '%{zip_code}%' AND ACT_YR_BLT <= 2008 AND ACT_YR_BLT >= 1950"
+        where_clause = f"CO_NO = '36' AND OWN_ZIPCD LIKE '%{zip_code}%' AND ACT_YR_BLT <= 2008 AND ACT_YR_BLT >= 1950"
     elif "Insurance Panic" in profile:
-        where_clause = f"OWN_ZIPCD LIKE '%{zip_code}%' AND ACT_YR_BLT >= 2010 AND ACT_YR_BLT <= 2012"
+        where_clause = f"CO_NO = '36' AND OWN_ZIPCD LIKE '%{zip_code}%' AND ACT_YR_BLT >= 2010 AND ACT_YR_BLT <= 2012"
     else: # Underlayment
-        where_clause = f"OWN_ZIPCD LIKE '%{zip_code}%' AND ACT_YR_BLT >= 2001 AND ACT_YR_BLT <= 2006"
+        where_clause = f"CO_NO = '36' AND OWN_ZIPCD LIKE '%{zip_code}%' AND ACT_YR_BLT >= 2001 AND ACT_YR_BLT <= 2006"
 
     try:
         params = {
@@ -93,7 +93,8 @@ def execute_hybrid_search(zip_code, profile):
             "resultRecordCount": 20 
         }
         
-        response = requests.get(f"{fdor_base_url}/query", params=params)
+        # Extended timeout to handle heavy server load gracefully
+        response = requests.get(f"{fdor_base_url}/query", params=params, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
@@ -103,7 +104,7 @@ def execute_hybrid_search(zip_code, profile):
                 st.info(f"Query Executed: `{where_clause}` | Zero features returned from GIS layer.")
                 return pd.DataFrame() 
                 
-            st.toast(f"Step 2: FDOR Index returned {len(features)} matches. Verifying against live LEEPA data...")
+            st.toast(f"Step 2: Fast-index complete ({len(features)} records). Verifying against live LEEPA data...")
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -116,7 +117,7 @@ def execute_hybrid_search(zip_code, profile):
                 yr_built = props.get('ACT_YR_BLT') or 0
                 
                 coords = geom.get('coordinates', [])
-                lat, lon = 26.6406, -81.8723
+                lat, lon = 26.6406, -81.8723 # Default Cape Coral fallback
                 
                 if coords:
                     c = coords
@@ -151,6 +152,8 @@ def execute_hybrid_search(zip_code, profile):
         else:
             st.error(f"Failed to connect to FDOR server. Error {response.status_code}")
             
+    except requests.exceptions.Timeout:
+        st.error("State server took too long to respond (Timeout). Please try clicking 'Fetch & Verify Leads' again.")
     except Exception as e:
         st.error(f"Execution Error: {e}")
         
