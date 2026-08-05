@@ -1,15 +1,15 @@
 [theme]
-# Primary accent color (CWC Professional Blue/Slate aesthetic)
-primaryColor = "#00569B" 
+# Primary accent color (CWC Vibrant Green)
+primaryColor = "#77BA43" 
 
-# Background color for the main app
-backgroundColor = "#F8F9FA" 
+# Background color for the main app (Clean white)
+backgroundColor = "#FFFFFF" 
 
-# Background color for the sidebar
-secondaryBackgroundColor = "#ECEFF1" 
+# Background color for the sidebar (Light gray to make the green pop)
+secondaryBackgroundColor = "#F4F4F4" 
 
-# Text color
-textColor = "#1E293B" 
+# Text color (CWC Charcoal Gray instead of standard black)
+textColor = "#464646" 
 
-# Font family (Clean, modern sans-serif)
+# Font family (We will override this with Montserrat in the CSS, but this is a good fallback)
 font = "sans serif"
