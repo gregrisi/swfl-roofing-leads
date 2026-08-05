@@ -1,0 +1,15 @@
+[theme]
+# Primary accent color (CWC Professional Blue/Slate aesthetic)
+primaryColor = "#00569B" 
+
+# Background color for the main app
+backgroundColor = "#F8F9FA" 
+
+# Background color for the sidebar
+secondaryBackgroundColor = "#ECEFF1" 
+
+# Text color
+textColor = "#1E293B" 
+
+# Font family (Clean, modern sans-serif)
+font = "sans serif"
