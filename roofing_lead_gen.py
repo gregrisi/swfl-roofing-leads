@@ -10,16 +10,42 @@ DB_FILE = "lee_county_cadastral.db"
 if not os.path.exists(DB_FILE):
     init_database()
 
-st.set_page_config(page_title="ApexRoof | Query Engine", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="CWC Roofing | Intelligence Engine", layout="wide", initial_sidebar_state="expanded")
 
+# --- CWC BRANDED CSS ---
 st.markdown("""
     <style>
-    .stMetric { background-color: #f0f2f6; padding: 15px; border-radius: 8px; box-shadow: 1px 1px 3px rgba(0,0,0,0.1); }
-    .query-box { background-color: #1e1e1e; color: #00ff00; padding: 10px; border-radius: 5px; font-family: monospace; }
+    /* Metric Card Styling */
+    .stMetric { 
+        background-color: #ffffff; 
+        padding: 15px; 
+        border-left: 5px solid #00569B; /* CWC Blue Accent */
+        border-radius: 5px; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05); 
+    }
+    /* Query Box Styling */
+    .query-box { 
+        background-color: #1e293b; 
+        color: #10b981; 
+        padding: 15px; 
+        border-radius: 5px; 
+        font-family: 'Courier New', monospace; 
+        border: 1px solid #334155;
+    }
+    /* Main Header Styling */
+    h1 {
+        color: #0F172A;
+        font-weight: 800;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- ADVANCED QUERY BUILDER ---
+# --- SIDEBAR: CAMPAIGN BUILDER ---
+# Using a professional building icon as a placeholder for their logo
+st.sidebar.markdown("## 🏢 CWC Roofing")
+st.sidebar.caption("Proprietary Lead Routing Engine")
+st.sidebar.markdown("---")
+
 st.sidebar.title("⚙️ Advanced Query Builder")
 
 LEE_COUNTY_DATA = {"Cape Coral": ["33904", "33914"]}
@@ -28,12 +54,10 @@ selected_zip = st.sidebar.selectbox("2. Territory (Zip Code)", LEE_COUNTY_DATA[s
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Structural Filters")
-# Slider 1: When was the house built?
 house_year_range = st.sidebar.slider("House Year Built Range", min_value=1950, max_value=2026, value=(1950, 2026))
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Roof Age & Condition")
-# Slider 2: How old is the ROOF currently?
 roof_age_range = st.sidebar.slider("Effective Roof Age (Years)", min_value=0, max_value=50, value=(14, 25))
 
 selected_materials = st.sidebar.multiselect(
@@ -46,15 +70,13 @@ execute_query = st.sidebar.button("Run Custom Query ⚡", type="primary", use_co
 
 # --- ENGINE LOGIC ---
 def build_and_run_query(zip_code, house_years, roof_ages, materials):
-    current_year = 2026 # Syncing to current system year
+    current_year = 2026
     
-    # Translate Roof Age back into calendar years
-    max_roof_year = current_year - roof_ages[0] # e.g. 2026 - 14 = 2012
-    min_roof_year = current_year - roof_ages[1] # e.g. 2026 - 25 = 2001
+    max_roof_year = current_year - roof_ages[0]
+    min_roof_year = current_year - roof_ages[1]
     
     conn = sqlite3.connect(DB_FILE)
     
-    # Dynamic SQL leveraging BOTH House Age and Last Roof Year
     base_query = f"""
         SELECT site_address, roof_type, year_built, last_roof_year, just_value, permit_status, last_permit_date, lat, lon 
         FROM properties 
@@ -70,14 +92,14 @@ def build_and_run_query(zip_code, house_years, roof_ages, materials):
     df = pd.read_sql_query(base_query, conn)
     conn.close()
     
-    # Calculate exact roof age for display
     if not df.empty:
         df['current_roof_age'] = current_year - df['last_roof_year']
         
     return df, base_query
 
 # --- MAIN DASHBOARD ---
-st.title("Roofing Intelligence Engine")
+st.title("Residential Roofing Intelligence Engine")
+st.markdown("**CWC Multi-State Pipeline PoC** — Currently indexing: *SWFL Sandbox (Lee County)*")
 
 if execute_query:
     if not selected_materials:
@@ -99,7 +121,6 @@ if execute_query:
             
             st.markdown("#### Qualified Lead Roster")
             
-            # Format Dataframe for clean UX
             display_df = df_leads[['site_address', 'roof_type', 'year_built', 'current_roof_age', 'permit_status', 'last_permit_date']]
             display_df.columns = ["Address", "Material", "House Built", "Roof Age (Yrs)", "Status", "Permit Detail"]
             
