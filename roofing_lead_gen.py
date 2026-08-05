@@ -51,7 +51,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- SIDEBAR: CAMPAIGN BUILDER ---
-st.sidebar.markdown("## 🏢 CWC Roofing")
+if os.path.exists("cwc_logo.png"):
+    st.sidebar.image("cwc_logo.png", use_container_width=True)
+else:
+    st.sidebar.markdown("## CWC Roofing")
 st.sidebar.caption("Proprietary Lead Routing Engine")
 st.sidebar.markdown("---")
 
