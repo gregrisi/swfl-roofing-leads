@@ -12,36 +12,45 @@ if not os.path.exists(DB_FILE):
 
 st.set_page_config(page_title="CWC Roofing | Intelligence Engine", layout="wide", initial_sidebar_state="expanded")
 
-# --- CWC BRANDED CSS ---
+# --- CWC BRANDED CSS & FONT INJECTION ---
 st.markdown("""
     <style>
+    /* Import Montserrat Font to match CWC Branding */
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;800&display=swap');
+
+    /* Force font across all Streamlit elements */
+    html, body, [class*="css"] {
+        font-family: 'Montserrat', sans-serif !important;
+    }
+
     /* Metric Card Styling */
     .stMetric { 
         background-color: #ffffff; 
         padding: 15px; 
-        border-left: 5px solid #00569B; /* CWC Blue Accent */
+        border-left: 6px solid #77BA43; /* CWC Green Accent */
         border-radius: 5px; 
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05); 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.08); 
     }
-    /* Query Box Styling */
+    
+    /* Query Box Styling - Matching their dark header */
     .query-box { 
-        background-color: #1e293b; 
-        color: #10b981; 
+        background-color: #464646; /* CWC Charcoal */
+        color: #77BA43; /* CWC Green */
         padding: 15px; 
         border-radius: 5px; 
         font-family: 'Courier New', monospace; 
-        border: 1px solid #334155;
+        border: 1px solid #333333;
     }
+    
     /* Main Header Styling */
-    h1 {
-        color: #0F172A;
-        font-weight: 800;
+    h1, h2, h3 {
+        color: #464646 !important;
+        font-weight: 800 !important;
     }
     </style>
 """, unsafe_allow_html=True)
 
 # --- SIDEBAR: CAMPAIGN BUILDER ---
-# Using a professional building icon as a placeholder for their logo
 st.sidebar.markdown("## 🏢 CWC Roofing")
 st.sidebar.caption("Proprietary Lead Routing Engine")
 st.sidebar.markdown("---")
